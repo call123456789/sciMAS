@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+# Run output, not source: `runs/` is the CLI default, `runs-dashboard/` is
+# web_dashboard.DEFAULT_OUTPUT_ROOT, and `tests/results/` is what
+# tests/runner.py --out points at. All three are regenerated, not fixtures.
+runs/
+runs-dashboard/
+tests/results/
+# Benchmark corpora are downloaded, not versioned: ResearchClawBench (2.4G)
+# and SMDDBench (2.8G) alone dwarf the checkout. See README for where to get
+# them; the graders read them from this path at run time.
+dataset/
+# Auto-resolved mcp configs (see ClaudeRunner._resolve_mcp_config).
+config/*.resolved.json
+# Per-machine MCP server credentials. Keeps a live key out of git history;
+# see claude_runner.py:_load_mcp_local_env.
+config/mcp.local.json
+# Per-machine LLM-judge credentials (api_key/api_base/model). Keeps a live
+# key out of git history; see tests/llm_judge.py:_try_config_credentials.
+config/llm_judge.local.json
+# Per-machine OpenAlex key for the literature tool. Keeps a live key out of
+# git history; see tools/web/litsearch_server.py:_local_config_key.
+config/openalex.local.json
+.DS_Store
+.pytest_cache/
+*.tmp
+# Claude Code's per-machine state (lock files carry a session id and pid).
+.claude/

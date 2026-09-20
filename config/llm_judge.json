@@ -1,0 +1,34 @@
+{
+  "$schema_note": "Centralized LLM judge config for sciMAS grading. Override with env vars using one of the prefixes below.",
+  "env_var_prefixes": [
+    "RESEARCH_CLAW_JUDGE",
+    "JUDGE",
+    "SCIMAS_LLM_JUDGE"
+  ],
+  "$credentials_note": "A key is read from an env-var prefix first, and only then from this file's own top-level api_key/api_base/model. Put real credentials in config/llm_judge.local.json (git-ignored), never in this tracked file — anything written here gets committed. This block is documentation only and is never read as a credential.",
+  "env_var_layout": {
+    "_API_KEY": "API key (required to enable any LLM judge path). The historical RESEARCH_CLAW_JUDGE_API_KEY / JUDGE_API_KEY suffix is preferred; the bare _KEY suffix is also recognized for consistency.",
+    "_API_BASE": "OpenAI-compatible chat-completions base URL. Falls back to default_api_base when unset.",
+    "_MODEL": "Model name (e.g. gpt-4.1, claude-3-7-sonnet-...). Required when _API_KEY is set."
+  },
+  "disabled_env_flag": "RESEARCH_CLAW_JUDGE_DISABLED",
+  "default_api_base": "https://api.openai.com/v1",
+  "default_model": "deepseek-flash",
+  "default_timeout_seconds": 100.0,
+  "$default_max_tokens": "The judge only ever replies 正确/错误; 5 tokens was sized for a plain chat model. A reasoning model (deepseek-flash) bills its hidden thinking against the same budget, so at 5 it returns an empty content with finish_reason=length and the verdict never arrives. 2048 leaves room to think and then answer; it is a cap, not a reservation.",
+  "default_max_tokens": 2048,
+  "per_dataset": {
+    "SciAgentGYM": {
+      "enabled": true,
+      "fallback_to_deterministic": true,
+      "temperature": 0.0,
+      "notes": "Uses the official SciAgentGYM is_answer_correct prompt: ask the LLM whether the model's answer is equivalent to the standard answer. Two extra blocks may be inlined, and they are not equivalent. metadata.golden_answer (a usable step chain) is context only - the chain is NOT the target: in most entries where it disagrees with `answer`, its last valued step is a helper (a tension, a radius of gyration). metadata.solution_steps (the dataset's own account of the solution) DOES steer the verdict: on some entries `answer` holds an intermediate value - for the Horwitz-trumpet entry `answer` is 2.8% (the between-laboratory RSD) while the question asks for the within-laboratory RSD the steps name, 1.41421 - so when it is present a fifth rule tells the judge to follow the quantity the question actually asks for. metadata.image_path figures are attached to the same message as OpenAI vision content blocks, with a numbered rule saying they belong to the QUESTION, not to the model's answer - the opposite of ResearchClawBench, where the attached image is the ground-truth target. A judge model that cannot accept image content fails the vision call, is retried text-only, and the reason is recorded in the grade notes (llm_judge.get_last_image_note). The image caps (4 MB per image, 12 MB total, 12 images) are code constants in tests/llm_judge.py, not config keys. Falls back to the deterministic text/numeric grader when the API is not configured."
+    },
+    "ResearchClawBench": {
+      "enabled": true,
+      "fallback_to_deterministic": true,
+      "temperature": 0.0,
+      "notes": "Uses the upstream multimodal checklist judge (rcb_official_judge.score_checklist) with the same credentials."
+    }
+  }
+}

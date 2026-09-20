@@ -1,0 +1,342 @@
+{
+  "genomics": {
+    "server": "biomni-genomics",
+    "role_target": "geneticist",
+    "tools": [
+      "annotate_celltype_scRNA",
+      "annotate_celltype_with_panhumanpy",
+      "create_scvi_embeddings_scRNA",
+      "create_harmony_embeddings_scRNA",
+      "get_uce_embeddings_scRNA",
+      "map_to_ima_interpret_scRNA",
+      "get_rna_seq_archs4",
+      "get_gene_set_enrichment_analysis_supported_database_list",
+      "gene_set_enrichment_analysis",
+      "analyze_chromatin_interactions",
+      "analyze_comparative_genomics_and_haplotypes",
+      "perform_chipseq_peak_calling_with_macs2",
+      "find_enriched_motifs_with_homer",
+      "analyze_genomic_region_overlap",
+      "unsupervised_celltype_transfer_between_scRNA_datasets",
+      "generate_embeddings_with_state",
+      "interspecies_gene_conversion",
+      "generate_gene_embeddings_with_ESM_models",
+      "generate_transcriptformer_embeddings"
+    ],
+    "skills": [
+      "biomni-genomics-scrna-celltype",
+      "biomni-genomics-gsea-archs4",
+      "biomni-genomics-chipseq-motifs",
+      "biomni-genomics-comparative-protein-embed"
+    ],
+    "skipped_unbundled": []
+  },
+  "bioimaging": {
+    "server": "biomni-bioimaging",
+    "role_target": "cell-biologist",
+    "tools": [
+      "split_modalities",
+      "prepare_input_for_nnunet",
+      "segment_with_nn_unet",
+      "create_segmentation_visualization",
+      "quick_rigid_registration",
+      "quick_affine_registration",
+      "quick_deformable_registration",
+      "batch_register_images",
+      "calculate_similarity_metrics"
+    ],
+    "skills": [
+      "biomni-bioimaging-registration",
+      "biomni-bioimaging-nnunet"
+    ],
+    "skipped_unbundled": []
+  },
+  "cell_biology": {
+    "server": "biomni-cell_biology",
+    "role_target": "cell-biologist",
+    "tools": [
+      "quantify_cell_cycle_phases_from_microscopy",
+      "quantify_and_cluster_cell_motility",
+      "perform_facs_cell_sorting",
+      "analyze_flow_cytometry_immunophenotyping",
+      "analyze_mitochondrial_morphology_and_potential"
+    ],
+    "skills": [
+      "biomni-cellbio-microscopy-quant",
+      "biomni-cellbio-flow-facs"
+    ],
+    "skipped_unbundled": []
+  },
+  "cancer_biology": {
+    "server": "biomni-cancer_biology",
+    "role_target": "cell-biologist",
+    "tools": [
+      "analyze_ddr_network_in_cancer",
+      "analyze_cell_senescence_and_apoptosis",
+      "detect_and_annotate_somatic_mutations",
+      "detect_and_characterize_structural_variations",
+      "perform_gene_expression_nmf_analysis",
+      "analyze_copy_number_purity_ploidy_and_focal_events"
+    ],
+    "skills": [
+      "biomni-cancer-genomics-network",
+      "biomni-cancer-senescence-apoptosis"
+    ],
+    "skipped_unbundled": []
+  },
+  "immunology": {
+    "server": "biomni-immunology",
+    "role_target": "cell-biologist",
+    "tools": [
+      "analyze_atac_seq_differential_accessibility",
+      "analyze_bacterial_growth_curve",
+      "isolate_purify_immune_cells",
+      "estimate_cell_cycle_phase_durations",
+      "track_immune_cells_under_flow",
+      "analyze_cfse_cell_proliferation",
+      "analyze_cytokine_production_in_cd4_tcells",
+      "analyze_ebv_antibody_titers",
+      "analyze_cns_lesion_histology",
+      "analyze_immunohistochemistry_image"
+    ],
+    "skills": [
+      "biomni-immuno-atac-motility",
+      "biomni-immuno-proliferation-cytokine"
+    ],
+    "skipped_unbundled": []
+  },
+  "biochemistry": {
+    "server": "biomni-biochemistry",
+    "role_target": "molecular-biologist",
+    "tools": [
+      "analyze_circular_dichroism_spectra",
+      "analyze_rna_secondary_structure_features",
+      "analyze_protease_kinetics",
+      "analyze_enzyme_kinetics_assay",
+      "analyze_protein_conservation"
+    ],
+    "skills": [
+      "biomni-biochemistry-cd-kinetics",
+      "biomni-biochemistry-rna-secondary",
+      "biomni-biochemistry-protein-conservation"
+    ],
+    "skipped_unbundled": [
+      "analyze_itc_binding_thermodynamics"
+    ]
+  },
+  "literature": {
+    "server": "biomni-literature",
+    "role_target": "literature-searcher",
+    "tools": [
+      "query_arxiv",
+      "query_pubmed",
+      "extract_url_content",
+      "extract_pdf_content"
+    ],
+    "skills": [
+      "biomni-literature-arxiv-pubmed",
+      "biomni-literature-web-extract"
+    ],
+    "skipped_unbundled": [
+      "fetch_supplementary_info_from_doi",
+      "query_scholar",
+      "search_google",
+      "advanced_web_search_claude"
+    ]
+  },
+  "protocols": {
+    "server": "biomni-protocols",
+    "role_target": "molecular-biologist",
+    "tools": [
+      "search_protocols",
+      "get_protocol_details",
+      "list_local_protocols",
+      "read_local_protocol"
+    ],
+    "skills": [
+      "biomni-protocols-wetlab-reference"
+    ],
+    "skipped_unbundled": []
+  },
+  "database": {
+    "server": "biomni-database",
+    "role_target": "pharma-data-specialist",
+    "tools": [
+      "query_uniprot",
+      "query_pdb",
+      "query_openfda",
+      "query_pubchem",
+      "query_chembl",
+      "query_clinicaltrials"
+    ],
+    "skills": [
+      "biomni-database-uniprot-pdb-pubchem",
+      "biomni-database-chembl-openfda-clinicaltrials"
+    ],
+    "skipped_unbundled": [
+      "query_alphafold",
+      "query_interpro",
+      "query_pdb_identifiers",
+      "query_kegg",
+      "query_stringdb",
+      "query_iucn",
+      "query_paleobiology",
+      "query_jaspar",
+      "query_worms",
+      "query_cbioportal",
+      "query_clinvar",
+      "query_geo",
+      "query_dbsnp",
+      "query_ucsc",
+      "query_ensembl",
+      "query_opentarget",
+      "query_monarch",
+      "query_gwas_catalog",
+      "query_gnomad",
+      "blast_sequence",
+      "query_reactome",
+      "query_regulomedb",
+      "query_pride",
+      "query_gtopdb",
+      "query_remap",
+      "query_mpd",
+      "query_emdb",
+      "query_synapse",
+      "query_unichem",
+      "query_dailymed",
+      "query_quickgo",
+      "query_encode",
+      "region_to_ccre_screen",
+      "get_genes_near_ccre"
+    ]
+  },
+  "pharmacology": {
+    "server": "biomni-pharmacology",
+    "role_target": "drug-discovery-scientist",
+    "tools": [
+      "analyze_radiolabeled_antibody_biodistribution",
+      "estimate_alpha_particle_radiotherapy_dosimetry",
+      "calculate_physicochemical_properties",
+      "analyze_xenograft_tumor_growth_inhibition"
+    ],
+    "skills": [
+      "biomni-pharmacology-rdkit-properties",
+      "biomni-pharmacology-radiolabel-dosimetry",
+      "biomni-pharmacology-tumor-inhibition"
+    ],
+    "skipped_unbundled": [
+      "run_diffdock_with_smiles",
+      "docking_autodock_vina",
+      "run_autosite",
+      "retrieve_topk_repurposing_drugs_from_disease_txgnn",
+      "predict_admet_properties",
+      "predict_binding_affinity_protein_1d_sequence",
+      "analyze_accelerated_stability_of_pharmaceutical_formulations",
+      "run_3d_chondrogenic_aggregate_assay",
+      "grade_adverse_events_using_vcog_ctcae",
+      "perform_mwas_cyp2c19_metabolizer_status",
+      "analyze_pixel_distribution",
+      "find_roi_from_image",
+      "analyze_western_blot",
+      "query_drug_interactions",
+      "check_drug_combination_safety",
+      "analyze_interaction_mechanisms",
+      "find_alternative_drugs_ddinter",
+      "query_fda_adverse_events",
+      "get_fda_drug_label_info",
+      "check_fda_drug_recalls",
+      "analyze_fda_safety_signals"
+    ]
+  },
+  "molecular_biology": {
+    "server": "biomni-molecular_biology",
+    "role_target": "molecular-biologist",
+    "tools": [
+      "annotate_open_reading_frames",
+      "annotate_plasmid",
+      "get_gene_coding_sequence",
+      "get_plasmid_sequence",
+      "align_sequences",
+      "pcr_simple",
+      "digest_sequence",
+      "find_restriction_sites",
+      "find_restriction_enzymes",
+      "find_sequence_mutations",
+      "design_knockout_sgrna",
+      "get_oligo_annealing_protocol",
+      "get_golden_gate_assembly_protocol",
+      "get_bacterial_transformation_protocol",
+      "design_primer",
+      "design_verification_primers",
+      "design_golden_gate_oligos",
+      "golden_gate_assembly"
+    ],
+    "skills": [
+      "biomni-molbio-plasmid-orf",
+      "biomni-molbio-pcr-cloning",
+      "biomni-molbio-alignment-mutation",
+      "biomni-molbio-knockout-protocols"
+    ],
+    "skipped_unbundled": []
+  },
+  "genetics": {
+    "server": "biomni-genetics",
+    "role_target": "geneticist",
+    "tools": [
+      "liftover_coordinates",
+      "analyze_cas9_mutation_outcomes",
+      "analyze_crispr_genome_editing",
+      "simulate_demographic_history",
+      "identify_transcription_factor_binding_sites",
+      "fit_genomic_prediction_model",
+      "perform_pcr_and_gel_electrophoresis",
+      "analyze_protein_phylogeny"
+    ],
+    "skills": [
+      "biomni-genetics-crispr-editing",
+      "biomni-genetics-phylogeny-demography",
+      "biomni-genetics-prediction-pcr"
+    ],
+    "skipped_unbundled": [
+      "bayesian_finemapping_with_deep_vi"
+    ]
+  },
+  "synthetic_biology": {
+    "server": "biomni-synthetic_biology",
+    "role_target": "molecular-biologist",
+    "tools": [
+      "engineer_bacterial_genome_for_therapeutic_delivery",
+      "analyze_bacterial_growth_rate",
+      "analyze_barcode_sequencing_data",
+      "analyze_bifurcation_diagram",
+      "create_biochemical_network_sbml_model",
+      "optimize_codons_for_heterologous_expression",
+      "simulate_gene_circuit_with_growth_feedback",
+      "identify_fas_functional_domains"
+    ],
+    "skills": [
+      "biomni-synbio-codon-design",
+      "biomni-synbio-network-bifurcation"
+    ],
+    "skipped_unbundled": []
+  },
+  "systems_biology": {
+    "server": "biomni-systems_biology",
+    "role_target": "structural-biologist",
+    "tools": [
+      "perform_flux_balance_analysis",
+      "model_protein_dimerization_network",
+      "simulate_metabolic_network_perturbation",
+      "simulate_protein_signaling_network",
+      "compare_protein_structures",
+      "simulate_renin_angiotensin_system_dynamics"
+    ],
+    "skills": [
+      "biomni-sysbio-fba-cobra",
+      "biomni-sysbio-signaling-dynamics"
+    ],
+    "skipped_unbundled": [
+      "query_chatnt"
+    ]
+  }
+}

@@ -1,0 +1,275 @@
+{
+  "mcpServers": {
+    "litsearch": {
+      "command": "python",
+      "args": ["tools/web/litsearch_server.py"],
+      "env": {}
+    },
+    "chemistry-analytical": {
+      "command": "python",
+      "args": ["tools/chemistry/analytical_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "chemistry-computational": {
+      "command": "python",
+      "args": ["tools/chemistry/computational_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "chemistry-environmental": {
+      "command": "python",
+      "args": ["tools/chemistry/environmental_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "chemistry-organic": {
+      "command": "python",
+      "args": ["tools/chemistry/organic_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "chemistry-physical": {
+      "command": "python",
+      "args": ["tools/chemistry/physical_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "physics-classical": {
+      "command": "python",
+      "args": ["tools/physics/classical_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "physics-electromagnetism": {
+      "command": "python",
+      "args": ["tools/physics/electromagnetism_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "physics-waves-fluid": {
+      "command": "python",
+      "args": ["tools/physics/waves_fluid_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "physics-condensed-matter": {
+      "command": "python",
+      "args": ["tools/physics/condensed_matter_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "physics-quantum-atomic": {
+      "command": "python",
+      "args": ["tools/physics/quantum_atomic_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biology-molecular": {
+      "command": "python",
+      "args": ["tools/biology/molecular_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biology-genetics": {
+      "command": "python",
+      "args": ["tools/biology/genetics_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biology-cell": {
+      "command": "python",
+      "args": ["tools/biology/cell_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biology-structural": {
+      "command": "python",
+      "args": ["tools/biology/structural_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biology-mass-spec": {
+      "command": "python",
+      "args": ["tools/biology/mass_spec_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "pharma-drug-discovery": {
+      "command": "python",
+      "args": ["tools/pharma/drug_discovery_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "pharma-drug-sda": {
+      "command": "python",
+      "args": ["tools/pharma/drug_sda_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "pharma-data": {
+      "command": "python",
+      "args": ["tools/pharma/data_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "pharma-automl": {
+      "command": "python",
+      "args": ["tools/pharma/automl_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "math-algebraic": {
+      "command": "python",
+      "args": ["tools/mathematics/algebraic_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "math-statistical": {
+      "command": "python",
+      "args": ["tools/mathematics/statistical_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "math-geometric": {
+      "command": "python",
+      "args": ["tools/mathematics/geometric_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "math-optimization": {
+      "command": "python",
+      "args": ["tools/mathematics/optimization_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "math-numerical": {
+      "command": "python",
+      "args": ["tools/mathematics/numerical_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-biochemistry": {
+      "command": "python",
+      "args": ["tools/biomni/biochemistry_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-literature": {
+      "command": "python",
+      "args": ["tools/biomni/literature_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-protocols": {
+      "command": "python",
+      "args": ["tools/biomni/protocols_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-database": {
+      "command": "python",
+      "args": ["tools/biomni/database_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-pharmacology": {
+      "command": "python",
+      "args": ["tools/biomni/pharmacology_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-molecular_biology": {
+      "command": "python",
+      "args": ["tools/biomni/molecular_biology_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-genetics": {
+      "command": "python",
+      "args": ["tools/biomni/genetics_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-synthetic_biology": {
+      "command": "python",
+      "args": ["tools/biomni/synthetic_biology_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-systems_biology": {
+      "command": "python",
+      "args": ["tools/biomni/systems_biology_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-genomics": {
+      "command": "python",
+      "args": ["tools/biomni/genomics_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-bioimaging": {
+      "command": "python",
+      "args": ["tools/biomni/bioimaging_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-cell_biology": {
+      "command": "python",
+      "args": ["tools/biomni/cell_biology_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-cancer_biology": {
+      "command": "python",
+      "args": ["tools/biomni/cancer_biology_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "biomni-immunology": {
+      "command": "python",
+      "args": ["tools/biomni/immunology_server.py"],
+      "env": {
+        "PATH": "/opt/anaconda3/envs/scimas/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}

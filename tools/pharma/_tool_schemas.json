@@ -1,0 +1,3003 @@
+{
+  "analyze_mmpbsa": {
+    "description": "Analyze MM/PBSA and MM/GBSA outputs and generate human-readable reports in work_dir/results.\nThis is the final analysis stage for both workflows, consuming outputs from run_mmpbsa or gmx_mmpbsa_propro together with structure files from prepare_complex/prepare_protein_md.\nArgs:\n    work_dir (str): Output directory from prepare_complex/gmx_mmpbsa_auto containing mmgbsa/ and mmpbsa/ subfolders.\nReturn:\n    status (str): 'success' or 'error'.\n    msg (str): Human-readable execution message.\n    work_dir (str): Input work directory used for analysis.\n    output_dir (str): Report directory fixed to work_dir/results.\n    detected_mode (str): Auto-selected mode, one of 'dual', 'single_pb', 'single_gb', or 'none'.\n    detected_inputs (Dict[str, str | None]): Auto-detected key file paths under work_dir.\n    missing_files (List[str]): Missing expected files among pb/gb decomp/results.\n    command (str): Executed analyzer command.\n    files (Dict[str, str]): Generated report files in output_dir.\n    reports (Dict[str, str | None]): Key report artifacts (csv/png/md) when available.\n    ",
+    "input_schema": {
+      "properties": {
+        "decomp": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gb_decomp": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gb_results": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gro": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pb_decomp": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pb_results": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "results": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "work_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_dir"
+      ],
+      "type": "object"
+    }
+  },
+  "analyze_protein_ligand_interactions": {
+    "description": "Analyze HETATM small-molecule interactions from a complex structure file. For HDOCK protein-peptide ATOM models, use interaction_visualizer(mode='peptide') instead. Identifies hydrogen bonds, hydrophobic contacts, π-π stacking, π-cation interactions, salt bridges, and halogen bonds.\nArgs:\n    complex_file (str): Path to the protein-ligand complex structure file (format: .pdb). Must contain both the protein and the docked ligand.\n    ligand_identifier (str): Identifier for the ligand in the complex file. Typically the residue name (e.g., \"LIG\", \"UNK\") or \"auto\" for auto-detection. When \"auto\", select the largest non-protein HETATM group. (default: \"auto\")\nReturn:\n    status (str): success/error\n    msg (str): message\n    interactions (dict): Interaction analysis results, containing:\n        --hydrogen_bonds (List[dict]): Each containing:\n            --protein_residue (str): Residue name + number (e.g., \"ASP189\")\n            --protein_chain (str): Chain ID (e.g., \"A\")\n            --protein_atom (str): Atom name (e.g., \"OD1\")\n            --ligand_atom (str): Ligand atom name in structure (e.g., \"N3\", \"O12\")\n            --donor (str): \"protein\" or \"ligand\"\n            --distance (float): Donor-acceptor distance (Å)\n            --strength (str): \"strong\" (<2.5Å) / \"moderate\" (2.5-3.2Å) / \"weak\" (3.2-3.5Å)\n        --hydrophobic_contacts (List[dict]): Each containing:\n            --protein_residue (str): e.g., \"LEU134\"\n            --protein_chain (str): Chain ID\n            --ligand_atom (str): Ligand atom name\n            --distance (float): Distance (Å)\n        --pi_stacking (List[dict]): Each containing:\n            --protein_residue (str): e.g., \"PHE228\"\n            --protein_chain (str): Chain ID\n            --type (str): \"parallel\" / \"t_shaped\"\n            --distance (float): Centroid-centroid distance (Å)\n        --pi_cation (List[dict]): Each containing:\n            --protein_residue (str): e.g., \"LYS215\"\n            --protein_chain (str): Chain ID\n            --cation_source (str): \"protein\" or \"ligand\"\n            --distance (float): Distance (Å)\n        --salt_bridges (List[dict]): Each containing:\n            --protein_residue (str): e.g., \"GLU166\"\n            --protein_chain (str): Chain ID\n            --distance (float): Distance (Å)\n        --halogen_bonds (List[dict]): Each containing:\n            --protein_residue (str): Residue name + number\n            --protein_chain (str): Chain ID\n            --halogen_type (str): \"Cl\" / \"Br\" / \"I\"\n            --distance (float): Distance (Å)\n    summary (dict): Pocket overview, containing:\n        --contacted_residues (List[str]): All residues within interaction range\n            (e.g., [\"ASP189\", \"HIS57\", \"SER195\"])\n        --interaction_counts (dict): Count by type\n            (e.g., {\"hydrogen_bonds\": 3, \"hydrophobic_contacts\": 5, \"pi_stacking\": 1, ...})\n        --total_interactions (int): Total count\n        --pocket_composition (dict): Fraction of contacted residues by character\n            (e.g., {\"hydrophobic\": 0.45, \"polar\": 0.30, \"positive\": 0.10, \"negative\": 0.15})\n    clashes (List[dict]): Steric clashes, each containing:\n        --protein_residue (str): Residue name + number\n        --ligand_atom (str): Ligand atom name\n        --distance (float): Distance (Å)\n        --severity (str): \"mild\" (1.5-2.0Å) / \"severe\" (<1.5Å)",
+    "input_schema": {
+      "properties": {
+        "complex_file": {
+          "type": "string"
+        },
+        "ligand_identifier": {
+          "default": "auto",
+          "type": "string"
+        }
+      },
+      "required": [
+        "complex_file"
+      ],
+      "type": "object"
+    }
+  },
+  "base64_to_server_file": {
+    "description": "Convert Base64 encoding back to a file on the server.\nArgs:\n    file_name (str): Input file name (e.g., a.pdb)\n    file_base64_string (str): Base64 string of input file \nReturn:\n    status (str): success/error\n    msg (str): message\n    save_file (str): File path to save",
+    "input_schema": {
+      "properties": {
+        "file_base64_string": {
+          "type": "string"
+        },
+        "file_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_name",
+        "file_base64_string"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_common_fragments": {
+    "description": "Compute the count of shared structural fragments between a target molecule and a list of candidate molecules using Morgan fingerprints.\nArgs:\n    target_smiles (str): SMILES string of the target molecule\n    candidate_smiles_list (List[str]): List of candidate molecule SMILES strings\n    radius (int): Morgan fingerprint radius, default is 2\nReturn:\n    status (str): success/error\n    msg (str): message\n    fragments_info (List[dict]): List of dict, each containing the keys 'smiles' and 'score'.\n        --smiles (str): A SMILES string of candidate_smiles_list\n        --common_fragment_count (float): Number of structural fragments shared between the candidate SMILES and the target SMILES",
+    "input_schema": {
+      "properties": {
+        "candidate_smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "radius": {
+          "default": 2,
+          "type": "integer"
+        },
+        "target_smiles": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_smiles",
+        "candidate_smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_dleps_score": {
+    "description": "Enter a list of candidate small molecules. Based on the input disease name, identify upregulated and downregulated genes associated with the disease state, and predict a reversal score for each small molecule. Generally, a score above 0.2 indicates effectiveness, with higher scores being better.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\n    disease_name (str): Supportes diseases, e.g., \"Aging\", \"Gout\", \"Pulmonary fibrosis\", \"Non-alcoholic fatty liver disease\", \"Obesity\" \nReturn:\n    status (str): success/error\n    msg (str): message\n    pred_scores (List[dict]): List of dict, each containing the keys 'smiles' and 'cs_score'. \n        --smiles (str): A SMILES string of smiles_list \n        --cs_score (float): Predicted reverse score",
+    "input_schema": {
+      "properties": {
+        "disease_name": {
+          "type": "string"
+        },
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list",
+        "disease_name"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_mol_basic_info": {
+    "description": "Compute a set of basic molecular properties for each SMILES.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (List[dict]): List of dict, each containing feature keys.\n        --smiles (str): A SMILES string of smiles_list\n        --molecular_formula (str): Molecular formula, e.g. \"C9H11NO3\"\n        --exact_molecular_weight (float): Exact molecular weight\n        --molecular_weight (float): Average molecular weight\n        --num_heavy_atoms (int): Number of heavy atoms\n        --num_atoms (int): Number of total atoms\n        --num_bonds (int): Number of bonds\n        --num_valence_electrons (int): Number of valence electrons\n        --formal_charge (int): Number of formal charge",
+    "input_schema": {
+      "properties": {
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_mol_charge": {
+    "description": "Compute Gasteiger partial charges and formal charge for each SMILES.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (List[dict]): List of dict, each containing several feature keys.\n        --smiles (str): A SMILES string of smiles_list\n        --min_gasteiger_charge (float): Minimum of Gasteiger charges\n        --max_gasteiger_charge (float): Maximum of Gasteiger charges\n        --avg_gasteiger_charge (float): Average of Gasteiger charges\n        --gasteiger_charge_range (float): Range of Gasteiger charges\n        --formal_charge (int): Formal charge",
+    "input_schema": {
+      "properties": {
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_mol_complexity": {
+    "description": "Compute custom molecular complexity-related descriptors for each SMILES.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (List[dict]): List of dict, each containing feature keys.\n        --smiles (str): A SMILES string of smiles_list\n        --molecular_complexity (int): Molecular complexity\n        --aromatic_proportion (float): Aromatic proportion \n        --asphericity (float): Asphericity",
+    "input_schema": {
+      "properties": {
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_mol_drug_chemistry": {
+    "description": "Compute key drug-likeness metrics for each SMILES.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (List[dict]): List of dict, each containing feature keys.\n        --smiles (str): A SMILES string of smiles_list\n        --qed (float): Quantitative Estimate of Drug-likeness (QED) score\n        --lipinski_rule_of_5_violations (int): Number of violations of Lipinski's Rule of Five",
+    "input_schema": {
+      "properties": {
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_mol_hbond": {
+    "description": "Compute hydrogen bonding-related properties for each SMILES.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (List[dict]): List of dict, each containing several feature keys.\n        --smiles (str): A SMILES string of smiles_list\n        --num_h_donors (int): Number of hydrogen bond donors\n        --num_h_acceptors (int): Number of hydrogen bond acceptors",
+    "input_schema": {
+      "properties": {
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_mol_hydrophobicity": {
+    "description": "Compute hydrophobicity-related molecular descriptors for each SMILES.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (List[dict]): List of dict, each containing feature keys.\n        --smiles (str): A SMILES string of smiles_list\n        --logp (float): The octanol-water partition coefficient (logP)\n        --molar_refractivity (float): Molar refractivity",
+    "input_schema": {
+      "properties": {
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_mol_structure_complexity": {
+    "description": "Compute a set of molecular complexity descriptors for each SMILES.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (List[dict]): List of dict, each containing feature keys.\n        --smiles (str): A SMILES string of smiles_list\n        --num_rotatable_bonds (int): Number of rotatable bonds\n        --num_rings (int): Number of total rings\n        --num_aromatic_rings (int): Number of aromatic rings\n        --num_aliphatic_rings (int): Number of aliphatic rings\n        --num_saturated_rings (int): Number of saturated rings\n        --num_heteroatoms (int): Number of heteroatoms\n        --fraction_csp3 (float): The fraction of sp³-hybridized carbon atoms (Fsp³)\n        --num_bridgehead_atoms (int): Number of bridgehead atoms",
+    "input_schema": {
+      "properties": {
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_mol_topology": {
+    "description": "Compute a set of topological descriptors for each SMILES.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (List[dict]): List of dict, each containing several feature keys.\n        --smiles (str): A SMILES string of smiles_list\n        --tpsa (float): Topological polar surface area\n        --chi0v (float): Non-valence molecular connectivity index\n        --chi1v (float): Non-valence molecular connectivity index\n        --chi2v (float): Non-valence molecular connectivity index\n        --chi3v (float): Non-valence molecular connectivity index\n        --chi4v (float): Non-valence molecular connectivity index\n        --chi0n (float): Non-valence molecular connectivity index\n        --chi1n (float): Non-valence molecular connectivity index\n        --chi2n (float): Non-valence molecular connectivity index\n        --chi3n (float): Non-valence molecular connectivity index\n        --chi4n (float): Non-valence molecular connectivity index\n        --hall_kier_alpha (float): Hall–Kier alpha value\n        --kappa1 (float): Kappa shape index\n        --kappa2 (float): Kappa shape index\n        --kappa3 (float): Kappa shape index",
+    "input_schema": {
+      "properties": {
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_morgan_fingerprint_similarity": {
+    "description": "Compute the Tanimoto similarities between a target molecule and a list of candidate molecules using Morgan fingerprints.\nArgs:\n    target_smiles (str): SMILES string of the target molecule\n    candidate_smiles_list (List[str]): List of candidate molecule SMILES strings\n    radius (int): Morgan fingerprint radius, default is 2\n    nBits (int): Morgan fingerprint vector bits number, default is 2048\nReturn:\n    status (str): success/error\n    msg (str): message\n    similarities (List[dict]): List of dict, each containing the keys 'smiles' and 'score'.\n        --smiles (str): A SMILES string of candidate_smiles_list\n        --score (float): Similarity value between the candidate SMILES and the target SMILES",
+    "input_schema": {
+      "properties": {
+        "candidate_smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "nBits": {
+          "default": 2048,
+          "type": "integer"
+        },
+        "radius": {
+          "default": 2,
+          "type": "integer"
+        },
+        "target_smiles": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_smiles",
+        "candidate_smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_pdb_basic_info": {
+    "description": "Read a protein pdb file and compute basic structural statistics.\nArgs:\n    pdb_file_path (str): Path to input pdb file\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (dict): A dict containing feature keys.\n        --total_atoms (int): Number of total atoms\n        --protein_atoms (int): Number of protein atoms\n        --het_atoms (int): Number of heteroatoms\n        --total_residues (int): Number of residues\n        --total_chains (int): Number of chains\n        --total_elements (int): Number of unique elements\n        --molecular_weight (float): Approximate molecular weight\n        --chains (list): Chains\n        --elements (list): Elements",
+    "input_schema": {
+      "properties": {
+        "pdb_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_pdb_composition_info": {
+    "description": "Read a protein pdb file and analyze compositional details by counting occurrences of each atom name, residue name, and the number of atoms per chain.\nArgs:\n    pdb_file_path (str): Path to input pdb file\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (dict): A dict containing feature keys.\n        --atom_types (dict): Occurrences of each atom name\n        --residue_types (dict): Occurrences of each residue name\n        --chain_lengths (dict): Atoms count of each chain name",
+    "input_schema": {
+      "properties": {
+        "pdb_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_pdb_quality_metrics": {
+    "description": "Read a protein pdb file and compute three key quality indicators.\nArgs:\n    pdb_file_path (str): Path to input pdb file\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (dict): A dict containing feature keys.\n        --avg_bfactor (float): Average B-factor (temperature factor)\n        --avg_occupancy (float): Average atomic occupancy\n        --avg_residues_per_chain (float): Average number of residues per chain",
+    "input_schema": {
+      "properties": {
+        "pdb_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_pdb_structural_geometry": {
+    "description": "Read a protein pdb file and compute key geometric properties based on Cα atom coordinates.\nArgs:\n    pdb_file_path (str): Path to input pdb file\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (dict): A dict containing feature keys.\n        --x_range (float): Spatial range along x-axis\n        --y_range (float): Spatial range along y-axis\n        --z_range (float): Spatial range along z-axis\n        --centroid (tuple): Molecular centroid\n        --radius_of_gyration (float): Radius of gyration\n        --max_distance (float): Maximum inter-Cα distance",
+    "input_schema": {
+      "properties": {
+        "pdb_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "calculate_protein_sequence_properties": {
+    "description": "Compute a set of physicochemical properties for the input protein sequence.\nArgs:\n    sequence (str): Input protein sequence\nReturn:\n    status (str): success/error\n    msg (str): message\n    metrics (dict): A dict containing feature keys.\n        --sequence_length (int): Sequence length\n        --molecular_weight (float): Molecular weight\n        --theoretical_pI (float): Theoretical isoelectric point (pI) \n        --extinction_coefficient_280nm (int): Extinction coefficient at 280 nm\n        --extinction_coefficient_mg_ml (float): Mass extinction coefficient\n        --instability_index (float): Instability index\n        --aliphatic_index (float): Aliphatic index\n        --average_hydrophilicity (float): Average hydrophilicity\n        --amino_acid_composition (dict): Detailed amino acid composition\n        --amino_acid_percentages (dict): Detailed amino acid percentages",
+    "input_schema": {
+      "properties": {
+        "sequence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence"
+      ],
+      "type": "object"
+    }
+  },
+  "chai1_predict": {
+    "description": "Predict protein structures with Chai-1 from sequences or FASTA, run inference (unless dry-run), and return per-model scoring summaries.\nArgs:\n    mode (str): Prediction mode, options: ['sequence', 'fasta', 'info']. 'info' returns only metadata. (default: 'sequence')\n    seq (str|None): Comma-separated protein sequence(s) for 'sequence' mode, e.g., \"MKT...\" or \"MKT...,GAVL...\" for multi-chain (default: None)\n    name (str|None): Comma-separated chain names corresponding to `seq`, e.g., \"ChainA,ChainB\"; defaults to 'chain_1', 'chain_2'... if omitted (default: None)\n    fasta_path (str|None): Path to a FASTA file for 'fasta' mode; required when mode='fasta' (default: None)\n    samples (int): Number of models/samples to generate (must be >= 1) (default: 5)\n    dry_run (bool): If True, prepare inputs (write input.fasta) but do not run Chai-1 inference (default: False)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary or error message\n    output_dir (str|None): Path to the run-specific artifact directory (created for both dry-run and actual runs)\n    model_scores (List[dict]|None): Per-model score summaries; each dict contains 'model_idx', 'cif_path', 'scores', and 'score_path'\n    best_model (dict|None): Summary of the top-ranked model with keys 'model_idx', 'aggregate_score', and 'cif_path'",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "fasta_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mode": {
+          "default": "sequence",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "samples": {
+          "default": 5,
+          "type": "integer"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    }
+  },
+  "chroma_complex": {
+    "description": "Generates a multi-chain protein complex candidate for interface and assembly design studies.\nArgs:\n    chains (str): Comma-separated chain lengths, e.g., '100,120', default '100,100'.\n    steps (int): Diffusion sampling step count, default 500.\n    device (str): Chroma execution device string, default 'cuda:0'.\n    fmt (str): Output structure format in {'cif','pdb'}, default 'cif'.\n    api_key (str | None): Chroma API key, default built-in key.\n    dry_run (bool): Validate parameters without model sampling, default False.\nReturn:\n    status (str): 'success' or 'error'.\n    msg (str): Human-readable execution summary.\n    output_dir (str): Run-specific output directory under tool_result/chroma_toolkit_result.\n    output_file (str): Target output structure file path.",
+    "input_schema": {
+      "properties": {
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "chains": {
+          "default": "100,100",
+          "type": "string"
+        },
+        "device": {
+          "default": "cuda:0",
+          "type": "string"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "fmt": {
+          "default": "cif",
+          "type": "string"
+        },
+        "steps": {
+          "default": 500,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "chroma_monomer": {
+    "description": "Generates a de novo single-chain protein candidate for exploratory protein design workflows.\nArgs:\n    length (int): Number of residues in the monomer chain, default 100.\n    steps (int): Diffusion sampling step count, default 500.\n    device (str): Chroma execution device string, default 'cuda:0'.\n    fmt (str): Output structure format in {'cif','pdb'}, default 'cif'.\n    api_key (str | None): Chroma API key, default built-in key.\n    dry_run (bool): Validate parameters without model sampling, default False.\nReturn:\n    status (str): 'success' or 'error'.\n    msg (str): Human-readable execution summary.\n    output_dir (str): Run-specific output directory under tool_result/chroma_toolkit_result.\n    output_file (str): Target output structure file path.",
+    "input_schema": {
+      "properties": {
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "device": {
+          "default": "cuda:0",
+          "type": "string"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "fmt": {
+          "default": "cif",
+          "type": "string"
+        },
+        "length": {
+          "default": 100,
+          "type": "integer"
+        },
+        "steps": {
+          "default": 500,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "chroma_symmetry": {
+    "description": "Generates a symmetry-constrained protein design candidate for oligomeric architecture exploration.\nArgs:\n    group (str): Symmetry group label such as 'C_3' or 'D_2'.\n    length (int): Residue count per protomer chain, default 100.\n    steps (int): Diffusion sampling step count, default 500.\n    num_chain_neighbors (int): Neighbor-chain count for symmetry conditioner, default 2.\n    langevin_factor (float): Langevin factor for conditioned sampling, default 8.0.\n    inverse_temperature (float): Inverse temperature for conditioned sampling, default 8.0.\n    device (str): Chroma execution device string, default 'cuda:0'.\n    fmt (str): Output structure format in {'cif','pdb'}, default 'cif'.\n    api_key (str | None): Chroma API key, default built-in key.\n    dry_run (bool): Validate parameters without model sampling, default False.\nReturn:\n    status (str): 'success' or 'error'.\n    msg (str): Human-readable execution summary.\n    output_dir (str): Run-specific output directory under tool_result/chroma_toolkit_result.\n    output_file (str): Target output structure file path.",
+    "input_schema": {
+      "properties": {
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "device": {
+          "default": "cuda:0",
+          "type": "string"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "fmt": {
+          "default": "cif",
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "inverse_temperature": {
+          "default": 8,
+          "type": "number"
+        },
+        "langevin_factor": {
+          "default": 8,
+          "type": "number"
+        },
+        "length": {
+          "default": 100,
+          "type": "integer"
+        },
+        "num_chain_neighbors": {
+          "default": 2,
+          "type": "integer"
+        },
+        "steps": {
+          "default": 500,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group"
+      ],
+      "type": "object"
+    }
+  },
+  "convert_complex_cif_to_pdb": {
+    "description": "Convert a protein-ligand complex file from CIF format to PDB format.\nArgs:\n    cif_file_path (str): Path of the input CIF file\nReturn:\n    status (str): success/error\n    msg (str): message\n    output_file (str): Path to the output .pdb file",
+    "input_schema": {
+      "properties": {
+        "cif_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cif_file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "convert_pdb_to_pdbqt_dock": {
+    "description": "Convert a protein file from PDB format to PDBQT format for docking preparation.\nArgs:\n    pdb_file_path (str): Path of the input PDB file\nReturn:\n    status (str): success/error\n    msg (str): message\n    output_file (str): Path to the output .pdbqt file",
+    "input_schema": {
+      "properties": {
+        "pdb_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "convert_smiles_to_format": {
+    "description": "Convert a list of SMILES strings or a list of SMI file paths into other molecular formats.\nArgs:\n    inputs (List[str]): List of SMILES strings or SMI file paths, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"] or [\"/path/exp_data/smiles_0.smi\", \"/path/exp_data/smiles_0.smi\"])\n    target_format (str): Target convertion format, e.g., \"sdf\", \"mol\", \"mol2\", \"pdb\", \"pdbqt\", \"xyz\", \"cif\", \"inchi\"\nReturn:\n    status (str): success/error\n    msg (str): message\n    convert_results (List[dict]): List of dict, each containing the keys 'input' and 'output_file'.\n        --input (str): A SMILES string or SMI file path of inputs\n        --output_file (str): Path to the converted target format file",
+    "input_schema": {
+      "properties": {
+        "inputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "target_format": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "inputs",
+        "target_format"
+      ],
+      "type": "object"
+    }
+  },
+  "equiscore_pipeline": {
+    "description": "Run one-click EquiScore workflow to extract pockets and score poses from docking output.\nArgs:\n    docking_result (str): Path to a docking-result SDF file containing ligand poses (required)\n    receptor_pdb (str): Path to receptor PDB file used for pocket definition (required)\n    ngpu (int): Number of GPUs to use for the screening stage (default: 1)\n    weight_path (str|None): Optional custom EquiScore model checkpoint path (default: None)\n    multi_pose (bool): Enable multi-pose scoring mode if True (default: False)\n    pose_num (int): Number of poses to evaluate when multi_pose is True (default: 1)\n    dry_run (bool|None): Validate inputs and print command flow without heavy execution (default: False)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary or error message\n    command (str): The subcommand executed ('pipeline')\n    run_dir (str|None): Run-specific directory under tool_result/equiscore_result\n    work_dir (str|None): Pipeline working directory containing intermediate data\n    single_sdf_dir (str|None): Directory containing split SDF files generated during pocket extraction\n    pocket_dir (str|None): Directory containing extracted pocket PDB data\n    predictions_path (str|None): Path to the final EquiScore prediction CSV file\n    split_sdf_count (int|None): Count of split SDF files generated\n    pocket_item_count (int|None): Count of pocket data entries extracted\n    prediction_count (int|None): Number of prediction rows in the output CSV\n    score_field (str|None): CSV column name used as the score\n    max_score (float|None): Maximum EquiScore observed\n    min_score (float|None): Minimum EquiScore observed\n    mean_score (float|None): Mean EquiScore across all predictions\n    median_score (float|None): Median EquiScore across all predictions",
+    "input_schema": {
+      "properties": {
+        "docking_result": {
+          "type": "string"
+        },
+        "dry_run": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        },
+        "multi_pose": {
+          "default": false,
+          "type": "boolean"
+        },
+        "ngpu": {
+          "default": 1,
+          "type": "integer"
+        },
+        "pose_num": {
+          "default": 1,
+          "type": "integer"
+        },
+        "receptor_pdb": {
+          "type": "string"
+        },
+        "weight_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "docking_result",
+        "receptor_pdb"
+      ],
+      "type": "object"
+    }
+  },
+  "equiscore_pocket": {
+    "description": "Extract binding pockets from docking results and prepare split SDFs for EquiScore.\nArgs:\n    docking_result (str): Path to docking result directory or file used as input for pocket extraction (required)\n    receptor_pdb (str): Path to the receptor PDB file (required)\n    pocket_cutoff (float|None): Optional numeric cutoff for pocket detection (default: None)\n    dry_run (bool|None): If True, validate inputs and prepare outputs without executing EquiScore (default: False)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary or error message\n    command (str): The subcommand executed ('get_pocket')\n    run_dir (str|None): Run-specific directory under tool_result/equiscore_result\n    single_sdf_dir (str|None): Path to directory containing split single-molecule SDFs\n    pocket_dir (str|None): Path to the generated pocket folder\n    split_sdf_count (int|None): Number of split SDF files created\n    pocket_item_count (int|None): Number of pocket entries generated\n    sample_single_sdfs (List[str]|None): Sample single-SDF filenames\n    sample_pockets (List[str]|None): Sample pocket directory names",
+    "input_schema": {
+      "properties": {
+        "docking_result": {
+          "type": "string"
+        },
+        "dry_run": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        },
+        "pocket_cutoff": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "receptor_pdb": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "docking_result",
+        "receptor_pdb"
+      ],
+      "type": "object"
+    }
+  },
+  "equiscore_screen": {
+    "description": "Score a pocket library with EquiScore and return prediction CSV plus summary statistics.\nArgs:\n    pocket_dir (str): Path to a pocket directory produced by `equiscore_pocket`.\n    ngpu (int): Number of GPUs to use (default 1).\n    batch_size (int): Inference batch size (default 128).\n    num_workers (int): Number of worker processes for data loading (default 8).\n    weight_path (str|None): Optional path to model weights.\n    multi_pose (bool): If True, score multiple poses per ligand.\n    pose_num (int): Number of poses to evaluate when `multi_pose` is True (default 1).\n    debug (bool): Enable debug mode.\n    dry_run (bool|None): If True, validate inputs without running EquiScore.\nReturn:\n    status (str): 'success' or 'error'.\n    msg (str): Human-readable summary or error message.\n    command (str): The subcommand executed ('screen').\n    run_dir (str|None): Run-specific directory under tool_result/equiscore_result.\n    output_dir (str|None): Directory where screening outputs were written.\n    predictions_path (str|None): Path to the CSV file with raw predictions.\n    prediction_count (int|None): Number of prediction rows in the CSV.\n    score_field (str|None): CSV column used for scoring, if detected.\n    max_score (float|None): Maximum observed score.\n    min_score (float|None): Minimum observed score.\n    mean_score (float|None): Mean score.\n    median_score (float|None): Median score.",
+    "input_schema": {
+      "properties": {
+        "batch_size": {
+          "default": 128,
+          "type": "integer"
+        },
+        "debug": {
+          "default": false,
+          "type": "boolean"
+        },
+        "dry_run": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        },
+        "multi_pose": {
+          "default": false,
+          "type": "boolean"
+        },
+        "ngpu": {
+          "default": 1,
+          "type": "integer"
+        },
+        "num_workers": {
+          "default": 8,
+          "type": "integer"
+        },
+        "pocket_dir": {
+          "type": "string"
+        },
+        "pose_num": {
+          "default": 1,
+          "type": "integer"
+        },
+        "weight_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "pocket_dir"
+      ],
+      "type": "object"
+    }
+  },
+  "evobind_tool": {
+    "description": "Design linear or cyclic peptide binders from a receptor sequence using EvoBind2 in structure-guided screening workflows.\nArgs:\n    fasta (str): Receptor FASTA file path containing the target protein sequence (required)\n    peptide_length (int): Length of the binder peptide to design, typically 8-15 residues (default: 10)\n    num_designs (int): Number of independent design rounds to run for diversity (default: 10)\n    num_iterations (int): Monte Carlo iterations per design round for sequence optimization (default: 100)\n    max_recycles (int): AlphaFold2 recycle count for structure prediction during design (default: 1)\n    model_name (str): AlphaFold2 model name, options: ['model_1', 'model_2', 'model_3', 'model_4', 'model_5'] (default: 'model_1')\n    target_residues (str): Receptor target residues as comma-separated 1-indexed positions, or 'all' for full surface (default: 'all')\n    cyclic (bool): Whether to enable cyclic peptide design with head-to-tail cyclization constraint (default: False)\n    msa_file (str|None): Optional precomputed MSA .a3m file path to accelerate homology search (default: None)\n    dry_run (bool): Print planned commands and validate inputs without executing design rounds (default: False)\n    skip_env_check (bool): Skip source workflow environment checks for faster startup (default: False)\nReturn:\n    status (str): 'success', 'error', or 'partial_success' execution status\n    msg (str): Human-readable execution summary or error message\n    output_dir (str): Unique run directory under tool_result/evobind_tool_result\n    fasta (str): Resolved absolute path of the input receptor FASTA file\n    peptide_length (int): Effective peptide length used in this run\n    num_designs (int): Effective number of design rounds used in this run\n    num_iterations (int): Effective number of Monte Carlo iterations used in this run\n    max_recycles (int): Effective AlphaFold2 recycle count used in this run\n    model_name (str): Effective AlphaFold2 model name used in this run\n    target_residues (str): Effective target residue specification used in this run\n    cyclic (bool): Effective cyclic peptide design flag used in this run\n    dry_run (bool): Effective dry-run flag used in this run\n    skip_env_check (bool): Effective environment-check skip flag used in this run\n    output_files (dict): Key output file paths including 'design_log', 'summary_csv', 'top_candidates_dir' when available\n    metrics (dict): Parsed summary metrics such as 'candidate_count', 'top_ipTM_score', 'top_pLDDT' when available",
+    "input_schema": {
+      "properties": {
+        "cyclic": {
+          "default": false,
+          "type": "boolean"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "fasta": {
+          "type": "string"
+        },
+        "max_recycles": {
+          "default": 1,
+          "type": "integer"
+        },
+        "model_name": {
+          "default": "model_1",
+          "type": "string"
+        },
+        "msa_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "num_designs": {
+          "default": 10,
+          "type": "integer"
+        },
+        "num_iterations": {
+          "default": 100,
+          "type": "integer"
+        },
+        "peptide_length": {
+          "default": 10,
+          "type": "integer"
+        },
+        "skip_env_check": {
+          "default": false,
+          "type": "boolean"
+        },
+        "target_residues": {
+          "default": "all",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fasta"
+      ],
+      "type": "object"
+    }
+  },
+  "extract_and_save_chains": {
+    "description": "Extract the specified chains or the longest amino-acid chain from the input protein structure pdb file and save as a new PDB file.\nArgs:\n    pdb_file_path (str): Path to input pdb file\n    chain_ids (List[str]|None): Chain IDs (e.g., [\"A\", \"C\"]); when set as None means the longest chain will be selected automatically\nReturn:\n    status (str): success/error\n    msg (str): message\n    out_file (str): Path to the saved pdb file",
+    "input_schema": {
+      "properties": {
+        "chain_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pdb_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "extract_bioemu_structures": {
+    "description": "Extracts per-conformation structures and ensemble metadata from a BioEmu output directory.\nArgs:\n    input_dir (str): BioEmu output directory containing topology PDB and XTC trajectory.\n    prefix (str): Prefix for individual PDB filenames, default 'conf'.\n    merge_pdb (bool): Export merged multi-model PDB, default False.\n    extract_npz (bool): Extract NPZ payload data when present, default False.\n    no_individual_pdbs (bool): Skip individual PDB exports, default False.\n    no_stats (bool): Skip ensemble statistics computation, default False.\n    sidechain_relax (bool): Run sidechain relaxation step, default False.\n    dry_run (bool): Validate input without extraction, default False.\nReturn:\n    status (str): 'success', 'partial_success', or 'error'.\n    msg (str): Human-readable extraction summary.\n    output_dir (str): Run-specific directory under tool_result/bioemu_result.\n    individual_pdb_dir (str): Directory for individual extracted PDB files.\n    exported_individual_count (int): Number of individual PDB files exported.",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "extract_npz": {
+          "default": false,
+          "type": "boolean"
+        },
+        "input_dir": {
+          "type": "string"
+        },
+        "merge_pdb": {
+          "default": false,
+          "type": "boolean"
+        },
+        "no_individual_pdbs": {
+          "default": false,
+          "type": "boolean"
+        },
+        "no_stats": {
+          "default": false,
+          "type": "boolean"
+        },
+        "prefix": {
+          "default": "conf",
+          "type": "string"
+        },
+        "sidechain_relax": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "input_dir"
+      ],
+      "type": "object"
+    }
+  },
+  "extract_pdb_chains": {
+    "description": "Extract the amino acid sequence of each chain from the PDB file.\nArgs:\n    pdb_file_path (str): Path to input pdb file\nReturn:\n    status (str): success/error\n    msg (str): message\n    chains (List[dict]): List of dict, each containing the keys 'chain' and 'sequence'.\n        --chain (str): Chain ID\n        --sequence (str): Sequence string",
+    "input_schema": {
+      "properties": {
+        "pdb_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "fix_pdb": {
+    "description": "Repair a PDB file with PDBFixer: fix missing atoms/residues, add hydrogens, remove heterogens, etc.\nArgs:\n    input_path (str): Path to the source PDB file to repair (required)\n    add_hydrogens (bool): Add missing hydrogens after atom completion (default: False)\n    ph (float): pH value used when adding hydrogens (default: 7.0)\n    remove_heterogens (bool): Remove heterogens/ligands; keeps waters if remove_water is False (default: False)\n    remove_water (bool): Remove water molecules even if heterogens are retained (default: False)\n    replace_nonstandard (bool): Replace nonstandard residues with standard counterparts (default: False)\n    keep_chains (List[str] | None): If provided, only retain the listed chain IDs (default: None)\n    add_missing_residues (bool): Attempt to model missing residues before filling atoms (default: False)\n    dry_run (bool): Validate and simulate repairs without writing output file (default: False)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary of the result\n    output_dir (str | None): Run-specific folder under tool_result/pdbfixer_result\n    output_file (str | None): Path to the repaired PDB file (None during dry_run or on error)\n    atom_count (int | None): Total atoms in the repaired topology\n    residue_count (int | None): Total residues in the repaired topology\n    chain_count (int | None): Total chains in the repaired topology",
+    "input_schema": {
+      "properties": {
+        "add_hydrogens": {
+          "default": false,
+          "type": "boolean"
+        },
+        "add_missing_residues": {
+          "default": false,
+          "type": "boolean"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "input_path": {
+          "type": "string"
+        },
+        "keep_chains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ph": {
+          "default": 7,
+          "type": "number"
+        },
+        "remove_heterogens": {
+          "default": false,
+          "type": "boolean"
+        },
+        "remove_water": {
+          "default": false,
+          "type": "boolean"
+        },
+        "replace_nonstandard": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "input_path"
+      ],
+      "type": "object"
+    }
+  },
+  "foldx_tool": {
+    "description": "Run FoldX workflows for structure repair, stability, mutation modeling, interface analysis, and scanning.\nArgs:\n    mode (str): FoldX mode, e.g. repairpdb/stability/buildmodel/analysecomplex/alascan/positionscan/pssm/sequencedetail.\n    pdb_path (str): Input PDB file path.\n    chains (str|None): Chain definition for complex/interface modes, e.g. 'A,B'.\n    positions (str|None): Position list for positionscan/pssm, e.g. 'RA32a,KA45G'.\n    mutant_file (str|None): FoldX mutation list file used by buildmodel mode.\n    number_of_runs (int): BuildModel repeat runs (default: 5).\n    water (str): FoldX water mode, one of CRYSTAL/PREDICT/NONE/COMPARE (default: CRYSTAL).\n    pdb_hydrogens (bool): Whether to read hydrogens from PDB (default: False).\n    foldx_bin (str): FoldX executable name or absolute path (default: 'foldx').\n    dry_run (bool): If True, only validate and return planned command without execution.\n    timeout (int): Max subprocess runtime in seconds (default: 7200).\nReturn:\n    status (str): success|error|partial_success.\n    msg (str): Human-readable execution summary.\n    mode (str|None): Normalized foldx mode.\n    output_dir (str|None): Run-specific output directory.\n    foldx_command (str|None): Executed/planned FoldX command.\n    pdb_file (str|None): Input PDB filename copied into output_dir.\n    key_files (dict): Key generated files relative to output_dir.\n    metrics (dict): Runtime and parsed metric values from FoldX outputs.\n    dry_run (bool): Whether current call is dry-run.\n    ",
+    "input_schema": {
+      "properties": {
+        "chains": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "foldx_bin": {
+          "default": "foldx",
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "mutant_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "number_of_runs": {
+          "default": 5,
+          "type": "integer"
+        },
+        "pdb_hydrogens": {
+          "default": false,
+          "type": "boolean"
+        },
+        "pdb_path": {
+          "type": "string"
+        },
+        "positions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout": {
+          "default": 7200,
+          "type": "integer"
+        },
+        "water": {
+          "default": "CRYSTAL",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "pdb_path"
+      ],
+      "type": "object"
+    }
+  },
+  "fpocket_toolkit": {
+    "description": "Detect binding pockets in a protein structure using fpocket_toolkit.\nArgs:\n    pdb_file (str): Input PDB/mmCIF file path to scan for pockets (required)\n    top_n (int): Limit returned pockets to the top N by druggability score; 0 means return all (default: 0)\n    min_druggability (float | None): Filter out pockets below this druggability threshold (0.0~1.0); None means no filter (default: None)\n    export_path (str | None): Filename beneath the run_dir to write the export; None means skip export (default: None)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable narrative about the run\n    run_dir (str): Absolute directory storing this run's results\n    output_dir (str): Path where fpocket preserved its raw outputs\n    pockets (List[Dict[str, Any]]): Parsed pocket descriptors, including scores, centers, and residue contacts\n    pocket_count (int): Number of pockets returned after filtering\n    output_files (Dict[str, str]): Preserved fpocket output files such as info, pymol scripts, etc.\n    exported (Dict[str, str] | None): Export metadata when export_path is provided\n    files (Dict[str, str]): All files created under the run_dir",
+    "input_schema": {
+      "properties": {
+        "min_druggability": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pdb_file": {
+          "type": "string"
+        },
+        "top_n": {
+          "default": 0,
+          "type": "integer"
+        },
+        "verbose": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pdb_file"
+      ],
+      "type": "object"
+    }
+  },
+  "get_pepinvent_info": {
+    "description": "Get information on preset peptide templates or amino acid lists.\nArgs:\n    mode (str): Control the output type, 'templates' outputs predefined peptide templates, 'amino_acids' outputs amino acid lists\nReturn:\n    status (str): success/error\n    msg (str): message\n    content (str): Output content",
+    "input_schema": {
+      "properties": {
+        "mode": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    }
+  },
+  "gmx_mmpbsa_propro": {
+    "description": "Compute protein-protein binding free energy from a prepared MD workspace using GB, PB, or both modes.\nThis step is the free-energy stage after prepare_protein_md (typically after fix_pdb) and before analyze_mmpbsa in the protein-protein workflow.\nArgs:\n    work_dir (str): Directory containing input files: em.gro, md.xtc, md.tpr, and topol.top (required)\n    method (str): Calculation method, options: ['gb', 'pb', 'both'] (default: 'gb')\n    nproc (int): MPI process count for gmx_MMPBSA parallel execution (default: 16)\n    skip_mmpbsa (bool): If True, only build index file and skip free-energy computation (default: False)\n    gro (str|None): Optional GRO file name or absolute path override for structure input (default: None)\n    dry_run (bool): Validate inputs and allocate output directory without executing gmx_MMPBSA (default: False)\nReturn:\n    status (str): 'success', 'error', or 'partial_success'\n    msg (str): Human-readable summary of execution outcome\n    output_dir (str): Unique result directory under tool_result/gmx_mmpbsa_propro_result\n    work_dir (str): Resolved absolute path of the input workspace\n    method (str): Effective calculation method used for this run\n    nproc (int): Effective process count used for this run\n    skip_mmpbsa (bool): Effective skip flag used for this run\n    dry_run (bool): Effective dry-run flag used for this run\n    resolved_inputs (dict): Absolute file paths selected for source script inputs (gro/xtc/tpr/top)\n    output_files (dict): Produced key output file paths such as index file and result files\n    metrics (dict): Parsed summary metrics including extracted DELTA G binding energy values when available",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "gro": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "method": {
+          "default": "gb",
+          "type": "string"
+        },
+        "nproc": {
+          "default": 16,
+          "type": "integer"
+        },
+        "skip_mmpbsa": {
+          "default": false,
+          "type": "boolean"
+        },
+        "work_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_dir"
+      ],
+      "type": "object"
+    }
+  },
+  "goca_pipeline": {
+    "description": "Runs GoCa coarse-grained setup and optional full MD workflow for protein structure relaxation and trajectory generation.\nArgs:\n    protein_pdb (str): Input protein PDB file path (required)\n    full_md (bool): Whether to run Energy Minimization, production MD, and post-processing (default: True)\n    temperature (float): GoCa reduced temperature used for MD simulation (default: 45.0)\n    md_time (float): MD simulation length in picoseconds (default: 12000.0)\n    gpu_ids (str|None): Optional GROMACS GPU device IDs (e.g., \"0,1\"); defaults to auto-detection (default: None)\n    dry_run (bool): Create tracked run directory and return normalized parameters without execution (default: False)\nReturn:\n    status (str): 'success', 'error', or 'partial_success'\n    msg (str): Human-readable run summary or error message\n    output_dir (str|None): Unique run directory under tool_result/goca_pipeline_result\n    work_dir (str): Relative GoCa working directory under output_dir\n    protein_pdb (str): Resolved absolute path of the input protein PDB\n    full_md (bool): Effective full_md value used by the wrapper\n    temperature (float): Effective reduced temperature used by the wrapper\n    md_time (float): Effective MD time in ps used by the wrapper\n    gpu_ids (str|None): Effective GPU IDs used by the wrapper\n    dry_run (bool): Effective dry_run value used by the wrapper\n    key_files (dict): Key output files relative to output_dir (e.g., 'input_pdb', 'md_xtc', 'em_gro')\n    analysis_dir (str|None): Analysis directory relative to output_dir when generated",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "full_md": {
+          "default": true,
+          "type": "boolean"
+        },
+        "gpu_ids": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "md_time": {
+          "default": 12000,
+          "type": "number"
+        },
+        "protein_pdb": {
+          "type": "string"
+        },
+        "temperature": {
+          "default": 45,
+          "type": "number"
+        }
+      },
+      "required": [
+        "protein_pdb"
+      ],
+      "type": "object"
+    }
+  },
+  "hdock_tool": {
+    "description": "Run protein-protein/protein-peptide docking with HDOCK from PDB inputs.\nBoth inputs must be parseable, non-degenerate PDB structures; SDF and PDBQT are rejected. The server selects the output directory and assigns non-conflicting partner chain IDs in its internal copy. For peptide complexes, pass the returned best model and partner_chains to interaction_visualizer(mode='peptide'); analyze_protein_ligand_interactions is for HETATM small molecules, not peptide ATOM records.\nArgs:\n    receptor (str): Receptor PDB file path (required)\n    ligand (str): Ligand/partner PDB file path for docking (required)\n    nmax (int): Number of docking models to generate (default: 100)\n    no_complex (bool): Whether to disable complex structure generation in createpl (default: False)\n    angle (int): Rotation sampling angle interval used by HDOCK in degrees (default: 15)\n    rsite (str|None): Optional receptor binding-site residue file path for template-based docking (default: None)\n    lsite (str|None): Optional ligand binding-site residue file path for template-based docking (default: None)\nReturn:\n    status (str): 'success', 'error', or 'partial_success' execution status\n    msg (str): Human-readable execution summary or error message\n    output_dir (str): Unique run directory under tool_result/hdock_tool_result\n    receptor (str): Resolved absolute receptor PDB input path\n    ligand (str): Resolved absolute ligand/partner PDB input path\n    nmax (int): Effective model count upper bound used in this run\n    no_complex (bool): Effective no-complex flag used in this run\n    angle (int): Effective rotation sampling angle parameter used in this run\n    rsite (str|None): Effective receptor binding-site file path used in this run\n    lsite (str|None): Effective ligand binding-site file path used in this run\n    output_files (dict): Key generated file paths including 'hdock_out', 'top_models_pdb', 'best_model_pdb' when available\n    partner_chains (List[str]): Partner chain IDs present in generated HDOCK models\n    metrics (dict): Summary metrics including 'model_count', 'best_docking_score', 'top10_avg_score' when available",
+    "input_schema": {
+      "properties": {
+        "angle": {
+          "default": 15,
+          "type": "integer"
+        },
+        "ligand": {
+          "type": "string"
+        },
+        "lsite": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nmax": {
+          "default": 100,
+          "type": "integer"
+        },
+        "no_complex": {
+          "default": false,
+          "type": "boolean"
+        },
+        "receptor": {
+          "type": "string"
+        },
+        "rsite": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "receptor",
+        "ligand"
+      ],
+      "type": "object"
+    }
+  },
+  "interaction_visualizer": {
+    "description": "Analyze protein-ligand, peptide-protein, or protein-protein interactions and return standardized artifacts.\nArgs:\n    mode (str): Analysis mode, one of ligand|peptide|protein.\n    complex_path (str|None): Path to merged complex structure file.\n    receptor_path (str|None): Path to receptor-only structure file for split-input mode.\n    partner_path (str|None): Path to partner protein/peptide file for split-input mode.\n    ligand_path (str|None): Path to ligand file for split-input mode.\n    chain_a (str|None): Receptor chain ID for protein mode with complex input.\n    chain_b (str|None): Partner chain ID for protein mode with complex input.\n    partner_chain (str|None): Partner chain hint for peptide mode.\n    ligand_resname (str|None): Ligand residue-name hint for ligand mode.\n    heatmap_cutoff (float): Interface heatmap atom-pair cutoff (angstrom), default 4.5.\n    title (str): Optional title prefix for generated figures.\n    resid_offset (int): Residue index offset for mapping PDB resid to external numbering.\n    residue_roles_json (str|None): Optional residue-role mapping JSON file path.\n    score (float|None): Optional docking score shown on 2D diagram.\n    delta_score (float|None): Optional delta score shown on 2D diagram.\n    smiles (str|None): Optional SMILES text shown on 2D diagram.\n    ligand_scale (float): Ligand drawing scale in 2D diagram, default 1.0.\n    top_n_bar (int): Number of residues shown in residue bar chart.\n    pymol_width (int): PyMOL render width in pixels.\n    pymol_height (int): PyMOL render height in pixels.\n    pymol_views (int): Number of PyMOL views.\n    skip_diagram2d (bool): Skip 2D diagram generation.\n    skip_bar (bool): Skip residue bar chart generation.\n    skip_heatmap (bool): Skip interface heatmap generation.\n    skip_network (bool): Skip interface network generation.\n    skip_csv (bool): Skip CSV export.\n    skip_pymol3d (bool): Skip PyMOL 3D rendering.\n    dry_run (bool): Validate and return planned execution without heavy run.\nReturn:\n    status (str): success|error|partial_success.\n    msg (str): Human-readable execution summary.\n    output_dir (str|None): Run-specific output directory.\n    key_files (dict): Key generated files (typically relative to output_dir).\n    ",
+    "input_schema": {
+      "properties": {
+        "chain_a": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "chain_b": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "complex_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "delta_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "heatmap_cutoff": {
+          "default": 4.5,
+          "type": "number"
+        },
+        "ligand_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ligand_resname": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ligand_scale": {
+          "default": 1,
+          "type": "number"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "partner_chain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "partner_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pymol_height": {
+          "default": 1200,
+          "type": "integer"
+        },
+        "pymol_views": {
+          "default": 4,
+          "type": "integer"
+        },
+        "pymol_width": {
+          "default": 1400,
+          "type": "integer"
+        },
+        "receptor_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "resid_offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "residue_roles_json": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "skip_bar": {
+          "default": false,
+          "type": "boolean"
+        },
+        "skip_csv": {
+          "default": false,
+          "type": "boolean"
+        },
+        "skip_diagram2d": {
+          "default": false,
+          "type": "boolean"
+        },
+        "skip_heatmap": {
+          "default": false,
+          "type": "boolean"
+        },
+        "skip_network": {
+          "default": false,
+          "type": "boolean"
+        },
+        "skip_pymol3d": {
+          "default": true,
+          "type": "boolean"
+        },
+        "smiles": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "default": "",
+          "type": "string"
+        },
+        "top_n_bar": {
+          "default": 20,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    }
+  },
+  "is_valid_protein_sequence": {
+    "description": "Check if the input protein sequence string is valid.\nArgs:\n    sequences (List[str]): List of input protein sequences\nReturn:\n    status (str): success/partial_success/error\n    msg (str): message\n    valid_res (List[dict]): List of dict, each containing the keys 'sequence' and 'is_valid'.\n        --sequence (str): A protein sequence of the input sequences list \n        --is_valid (bool): Is the protein sequence valid or not",
+    "input_schema": {
+      "properties": {
+        "sequences": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sequences"
+      ],
+      "type": "object"
+    }
+  },
+  "is_valid_smiles": {
+    "description": "Check if the input SMILES string is valid\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"])\nReturn:\n    status (str): success/partial_success/error\n    msg (str): message\n    valid_res (List[dict]): List of dict, each containing the keys 'smiles' and 'is_valid'. \n        --smiles (str): A SMILES string of smiles_list\n        --is_valid (bool): Is the SMILES valid or not",
+    "input_schema": {
+      "properties": {
+        "smiles_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "smiles_list"
+      ],
+      "type": "object"
+    }
+  },
+  "karmadock_tool": {
+    "description": "Performs protein-ligand virtual screening with KarmaDock for ranking ligands and optionally exporting docked poses.\nThe crystal ligand must contain co-crystal coordinates aligned with the protein; independently generated coordinates are invalid. The server selects the output directory.\nArgs:\n    ligand_smi (str): Path to the ligand SMILES list file (required)\n    protein_file (str): Path to the target protein PDB file (required)\n    crystal_ligand_file (str): Path to the crystal ligand MOL2 file used to locate the binding pocket (required)\n    score_threshold (float): Score cutoff used during pose post-processing (default: 50.0)\n    batch_size (int): Inference batch size for model execution (default: 64)\n    random_seed (int): Random seed for reproducibility (default: 2020)\n    dry_run (bool): Create tracked output directory and validate parameters without executing model inference (default: False)\nReturn:\n    status (str): 'success', 'error', or 'partial_success'\n    msg (str): Human-readable run summary or error message\n    output_dir (str|None): Unique run directory under tool_result/karmadock_tool_result\n    ligand_smi (str): Resolved absolute path of the input ligand SMILES file\n    protein_file (str): Resolved absolute path of the input protein PDB file\n    crystal_ligand_file (str): Resolved absolute path of the input crystal ligand MOL2 file\n    score_threshold (float): Effective score threshold used by the wrapper\n    batch_size (int): Effective batch size used by the wrapper\n    random_seed (int): Effective random seed used by the wrapper\n    dry_run (bool): Effective dry_run flag used by the wrapper\n    key_files (dict): Generated key output files relative to output_dir (e.g., 'score_csv', 'pose_sdf_files')\n    metrics (dict): Aggregated screening metrics parsed from score.csv (e.g., 'num_ligands_scored', 'best_karma_score')",
+    "input_schema": {
+      "properties": {
+        "batch_size": {
+          "default": 64,
+          "type": "integer"
+        },
+        "crystal_ligand_file": {
+          "type": "string"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "ligand_smi": {
+          "type": "string"
+        },
+        "protein_file": {
+          "type": "string"
+        },
+        "random_seed": {
+          "default": 2020,
+          "type": "integer"
+        },
+        "score_threshold": {
+          "default": 50,
+          "type": "number"
+        }
+      },
+      "required": [
+        "ligand_smi",
+        "protein_file",
+        "crystal_ligand_file"
+      ],
+      "type": "object"
+    }
+  },
+  "libinvent_rgroup_sampling_by_scaffold": {
+    "description": "Generate new molecules sampling from the input scaffold.\nArgs:\n    scaffold (str): Input scaffold SMILES string containing R-group position markers such as [*:1], [*:2], etc. e.g., 'c1ccc([*:1])cc1C(=O)N[*:2]'\n    n (int): Number of molecules for sampling\n    lipinski (bool): Whether to apply Lipinski's rule of five filtering, default is True\n    filter_preset (str): Filter preset, options: ['none', 'minimal', 'default', 'strict'], default is 'default'\nReturn:\n    status (str): success/error\n    msg (str): message\n    save_smiles_file (str): Path to the saved SMILES file\n    output_smiles_list (List[str]): List of generated SMILES strings",
+    "input_schema": {
+      "properties": {
+        "filter_preset": {
+          "default": "default",
+          "type": "string"
+        },
+        "lipinski": {
+          "default": true,
+          "type": "boolean"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "scaffold": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scaffold",
+        "n"
+      ],
+      "type": "object"
+    }
+  },
+  "libinvent_rgroup_sampling_by_scaffold_name": {
+    "description": "Generate new molecules sampling from the input scaffold name.\nArgs:\n    scaffold_name (str): Built-in common drug scaffold name, options: ['benzamide', 'biphenyl', 'pyrimidine', 'indole', 'quinoline', 'piperidine_phenyl', 'sulfonamide', 'phenyl', 'pyridine', 'morpholine', 'triazine', 'trisubstituted_benzene']\n    n (int): Number of molecules for sampling\n    lipinski (bool): Whether to apply Lipinski's rule of five filtering, default is True\n    filter_preset (str): Filter preset, options: ['none', 'minimal', 'default', 'strict'], default is 'default'\nReturn:\n    status (str): success/error\n    msg (str): message\n    save_smiles_file (str): Path to the saved SMILES file\n    output_smiles_list (List[str]): List of generated SMILES strings",
+    "input_schema": {
+      "properties": {
+        "filter_preset": {
+          "default": "default",
+          "type": "string"
+        },
+        "lipinski": {
+          "default": true,
+          "type": "boolean"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "scaffold_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scaffold_name",
+        "n"
+      ],
+      "type": "object"
+    }
+  },
+  "linkinvent_linker_sampling_by_warhead_pair_name": {
+    "description": "Generate new molecules sampling from the input preset warhead pair name.\nArgs:\n    warhead_pair_name (str): Built-in warhead pair name; options: ['phenyl_phenyl', 'phenyl_pyridine', 'phenyl_piperidine', 'phenyl_morpholine', 'pyridine_morpholine', 'phenol_furan', 'indole_piperazine', 'thiophene_piperazine', 'benzamide_piperidine']\n    n (int): Number of molecules for sampling\n    filter_preset (str): Filter preset, options: ['none', 'minimal', 'default', 'strict'], default is 'default'\n    lipinski (bool): Whether to apply Lipinski's rule of five filtering, default is True\n    min_linker_atoms (int): Minimum number of atoms in the linker, default is 0\n    max_linker_atoms (int): Maximum number of atoms in the linker, default is 0\nReturn:\n    status (str): success/error\n    msg (str): message\n    save_smiles_file (str): Path to the saved SMILES file\n    output_smiles_list (List[str]): List of generated SMILES strings",
+    "input_schema": {
+      "properties": {
+        "filter_preset": {
+          "default": "default",
+          "type": "string"
+        },
+        "lipinski": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_linker_atoms": {
+          "default": 0,
+          "type": "integer"
+        },
+        "min_linker_atoms": {
+          "default": 0,
+          "type": "integer"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "warhead_pair_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "warhead_pair_name",
+        "n"
+      ],
+      "type": "object"
+    }
+  },
+  "linkinvent_linker_sampling_by_warheads": {
+    "description": "Generate new molecules sampling from the input two warhead fragments.\nArgs:\n    warheads (str): SMILES of two warheads separated by '|', e.g., '*c1ccc(O)cc1|*N1CCNCC1'\n    n (int): Number of molecules for sampling\n    filter_preset (str): Filter preset, options: ['none', 'minimal', 'default', 'strict'], default is 'default'\n    lipinski (bool): Whether to apply Lipinski's rule of five filtering, default is True\n    min_linker_atoms (int): Minimum number of atoms in the linker, default is 0\n    max_linker_atoms (int): Maximum number of atoms in the linker, default is 0\nReturn:\n    status (str): success/error\n    msg (str): message\n    save_smiles_file (str): Path to the saved SMILES file\n    output_smiles_list (List[str]): List of generated SMILES strings",
+    "input_schema": {
+      "properties": {
+        "filter_preset": {
+          "default": "default",
+          "type": "string"
+        },
+        "lipinski": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_linker_atoms": {
+          "default": 0,
+          "type": "integer"
+        },
+        "min_linker_atoms": {
+          "default": 0,
+          "type": "integer"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "warheads": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "warheads",
+        "n"
+      ],
+      "type": "object"
+    }
+  },
+  "molecule_docking_quickvina_fullprocess": {
+    "description": "Perform small-molecule docking using QuickVina2-GPU (Accelerated AutoDock Vina).\nThe server selects the output directory. The compiled backend accepts at most 47.625 Å per box axis, 129 movable ligand atoms, and 47 ligand torsions.\nArgs:\n    pdb_file_path (str): Path to the protein receptor file (format .pdb)\n    smiles (str): Input molecule SMILES\n    pocket_center_x (float): X-coordinate of the docking pocket center\n    pocket_center_y (float): Y-coordinate of the docking pocket center\n    pocket_center_z (float): Z-coordinate of the docking pocket center\n    pocket_size_x (float): Size of the docking pocket along the X-axis (default 25.0)\n    pocket_size_y (float): Size of the docking pocket along the Y-axis (default 25.0)\n    pocket_size_z (float): Size of the docking pocket along the Z-axis (default 25.0)\nReturn:\n    status (str): success/error\n    msg (str): message\n    docking_affinity_value (float): Docking affinity value, unit kcal/mol\n    docking_file (str): A PDBQT file contains docking poses, atom types, and charges for analyzing binding results.\n    ",
+    "input_schema": {
+      "properties": {
+        "pdb_file_path": {
+          "type": "string"
+        },
+        "pocket_center_x": {
+          "type": "number"
+        },
+        "pocket_center_y": {
+          "type": "number"
+        },
+        "pocket_center_z": {
+          "type": "number"
+        },
+        "pocket_size_x": {
+          "default": 25,
+          "type": "number"
+        },
+        "pocket_size_y": {
+          "default": 25,
+          "type": "number"
+        },
+        "pocket_size_z": {
+          "default": 25,
+          "type": "number"
+        },
+        "smiles": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path",
+        "smiles",
+        "pocket_center_x",
+        "pocket_center_y",
+        "pocket_center_z"
+      ],
+      "type": "object"
+    }
+  },
+  "openawsem_sim": {
+    "description": "Run OpenAWSEM coarse-grained protein simulation for annealing or NVT workflows in structure screening and folding studies.\nArgs:\n    sim_dir (str|None): Simulation directory containing *-openmmawsem.pdb or *_openmmawsem.pdb; if provided, skips structure creation (default: None)\n    pdb (str|None): PDB file path or PDB ID used by awsem_create when sim_dir is not provided (default: None)\n    steps (float): Total simulation step count (default: 1e5 = 100,000 steps)\n    mode (str): Temperature control mode, options: ['annealing', 'nvt'] (default: 'annealing')\n    temperature (float): Target temperature in Kelvin for NVT mode (default: 300.0)\n    platform (str): OpenMM compute platform, options: ['CPU', 'CUDA', 'OpenCL'] (default: 'CUDA')\n    use_frag_mem (bool): Whether to use fragment memory instead of single memory for contact terms (default: False)\n    compute_q (bool): Whether to enable Q-value related terms in the energy function when available (default: False)\n    dry_run (bool): If True, validate setup and create run directory without executing MD steps (default: False)\n    gpu_id (str): GPU device index for CUDA/OpenCL platform (default: '0')\nReturn:\n    status (str): 'success', 'error', or 'partial_success' execution status\n    msg (str): Human-readable execution summary or error message\n    output_dir (str): Unique run directory under tool_result/openawsem_sim_result\n    simulation_dir (str): Effective simulation directory used by the delegated source script\n    steps (float): Effective step count used in this run\n    mode (str): Effective simulation mode used in this run\n    temperature (float): Effective NVT temperature used in this run\n    platform (str): Effective compute platform used in this run\n    dry_run (bool): Effective dry-run flag used in this run\n    output_files (dict): Key output file paths such as 'final_pdb', 'energy_log', 'checkpoint', 'trajectory_dcd'\n    metrics (dict): Parsed summary metrics such as 'energy_log_lines', 'last_energy_value', 'min_energy', 'max_energy' when available",
+    "input_schema": {
+      "properties": {
+        "compute_q": {
+          "default": false,
+          "type": "boolean"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "gpu_id": {
+          "default": "0",
+          "type": "string"
+        },
+        "mode": {
+          "default": "annealing",
+          "type": "string"
+        },
+        "pdb": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "platform": {
+          "default": "CUDA",
+          "type": "string"
+        },
+        "sim_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "steps": {
+          "default": 100000,
+          "type": "number"
+        },
+        "temperature": {
+          "default": 300,
+          "type": "number"
+        },
+        "use_frag_mem": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "openawsem_traj_extract": {
+    "description": "Extracts representative structures from OpenAWSEM trajectories for downstream ensemble analysis.\nArgs:\n    sim_dir (str): OpenAWSEM simulation directory containing trajectory and topology files.\n    num_frames (int): Number of evenly spaced structures to extract when `times` is not provided, default 100.\n    times (List[float] | None): Explicit extraction time points in picoseconds.\n    backend (str): Trajectory backend in {mdtraj, mdanalysis, auto}, default auto.\n    dry_run (bool): Validate file discovery without extraction, default False.\nReturn:\n    status (str): 'success', 'error', or 'partial_success'.\n    msg (str): Human-readable extraction summary.\n    output_dir (str): Unique run directory under tool_result/openawsem_result.\n    extracted_dir (str): Directory containing extracted PDB frames.\n    frame_count (int): Number of extracted frame files.",
+    "input_schema": {
+      "properties": {
+        "backend": {
+          "default": "auto",
+          "type": "string"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "num_frames": {
+          "default": 100,
+          "type": "integer"
+        },
+        "sim_dir": {
+          "type": "string"
+        },
+        "times": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "sim_dir"
+      ],
+      "type": "object"
+    }
+  },
+  "openmm_extract_frames": {
+    "description": "Extracts evenly spaced protein conformations from an OpenMM work directory for downstream screening.\nArgs:\n    work_dir (str): OpenMM MD output directory containing topology and trajectory files.\n    num_frames (int): Number of evenly spaced frames to extract, default 100.\n    protein_only (bool): Keep only protein atoms in extracted frames, default False.\n    align (bool): Align extracted structures to the first frame, default False.\n    prefix (str): Filename prefix for extracted PDB frames, default 'frame'.\n    dry_run (bool): Validate inputs without extraction, default False.\nReturn:\n    status (str): 'success', 'partial_success', or 'error'.\n    msg (str): Human-readable extraction summary.\n    output_dir (str): Run-specific directory under tool_result/openmm_md_result.\n    frames_dir (str): Directory where extracted frame PDB files are saved.\n    frame_count (int): Number of extracted frame files.",
+    "input_schema": {
+      "properties": {
+        "align": {
+          "default": false,
+          "type": "boolean"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "num_frames": {
+          "default": 100,
+          "type": "integer"
+        },
+        "prefix": {
+          "default": "frame",
+          "type": "string"
+        },
+        "protein_only": {
+          "default": false,
+          "type": "boolean"
+        },
+        "work_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_dir"
+      ],
+      "type": "object"
+    }
+  },
+  "pack_sidechains": {
+    "description": "Predict full-atom sidechain conformations from backbone PDBs for protein structure preparation.\nArgs:\n    input_pdb (str): Input PDB file path, required.\n    device (str | None): Compute device such as cuda:0, default None (auto).\n    chunk_size (int): Inference chunk size for long proteins, default 500.\n    no_post_process (bool): Skip rotamer post-processing for faster runtime, default False.\n    max_optim_iters (int): Maximum optimization iterations in post-process, default 250.\n    steric_wt (float): Steric clash penalty weight, default 1.0.\n    optim_repeats (int): Post-process optimization repeats, default 2.\n    dry_run (bool): Create run directory without running inference, default False.\nReturn:\n    status (str): 'success', 'error', or 'partial_success'.\n    msg (str): Human-readable execution message.\n    output_dir (str): Unique run directory under result root.\n    output_pdb (str): Expected or generated output PDB path.",
+    "input_schema": {
+      "properties": {
+        "chunk_size": {
+          "default": 500,
+          "type": "integer"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "input_pdb": {
+          "type": "string"
+        },
+        "max_optim_iters": {
+          "default": 250,
+          "type": "integer"
+        },
+        "no_post_process": {
+          "default": false,
+          "type": "boolean"
+        },
+        "optim_repeats": {
+          "default": 2,
+          "type": "integer"
+        },
+        "steric_wt": {
+          "default": 1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_pdb"
+      ],
+      "type": "object"
+    }
+  },
+  "pepinvent_peptide_sampling_by_peptide": {
+    "description": "Generate new peptide molecules sampling from the input peptide sequence.\nArgs:\n    peptide (str): SMILES representation of a peptide sequence, with amino acid residues separated by '|?|', e.g., 'N[C@@H](CCCCN)C(=O)|?|N[C@@H](CC(C)C)C(=O)|?|N[C@@H](CCCNC(=N)N)C(=O)' \n    n (int): Number of molecules for sampling\n    filter_preset (str): Filter preset, options: ['none', 'minimal', 'default', 'strict'], default is 'default'\n    mw_min (float): Minimum molecular weight, default is 0.0\n    mw_max (float): Maximum molecular weight, default is 0.0\nReturn:\n    status (str): success/error\n    msg (str): message\n    save_smiles_file (str): Path to the saved SMILES file\n    output_smiles_list (List[str]): List of generated SMILES strings",
+    "input_schema": {
+      "properties": {
+        "filter_preset": {
+          "default": "default",
+          "type": "string"
+        },
+        "mw_max": {
+          "default": 0,
+          "type": "number"
+        },
+        "mw_min": {
+          "default": 0,
+          "type": "number"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "peptide": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "peptide",
+        "n"
+      ],
+      "type": "object"
+    }
+  },
+  "pepinvent_peptide_sampling_by_template": {
+    "description": "Generate new peptide molecules sampling from the input preset template name.\nArgs:\n    template (str): Built-in peptide molecular template, options: ['tripeptide_mask_middle', 'tripeptide_mask_ends', 'tetrapeptide_mask_ends', 'tetrapeptide_mask_middle', 'pentapeptide_mask_partial', 'pentapeptide_mask_all', 'hexapeptide_mask_partial', 'cyclic_scaffold', 'stapled_peptide', 'hexapeptide_alternating']\n    n (int): Number of molecules for sampling\n    filter_preset (str): Filter preset, options: ['none', 'minimal', 'default', 'strict'], default is 'default'\n    mw_min (float): Minimum molecular weight, default is 0.0\n    mw_max (float): Maximum molecular weight, default is 0.0\nReturn:\n    status (str): success/error\n    msg (str): message\n    save_smiles_file (str): Path to the saved SMILES file\n    output_smiles_list (List[str]): List of generated SMILES strings",
+    "input_schema": {
+      "properties": {
+        "filter_preset": {
+          "default": "default",
+          "type": "string"
+        },
+        "mw_max": {
+          "default": 0,
+          "type": "number"
+        },
+        "mw_min": {
+          "default": 0,
+          "type": "number"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "template": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "template",
+        "n"
+      ],
+      "type": "object"
+    }
+  },
+  "pred_binding_affinity_boltz2": {
+    "description": "Use Boltz to predict binding affinity between protein (receptor) and small molecule (ligand).\nThe server creates and returns an isolated output directory; callers cannot select it.\nArgs:\n    protein (List[dict]): Protein chains, each element contains 'chain' and 'sequence' (e.g., [{{'chain': 'A', 'sequence': 'MGNAAAAKKGSEQASQRRSSLEQP*'}}])\n    smiles (str): Input SMILES string (e.g., \"N[C@@H](Cc1ccc(O)cc1)C(=O)O\")\nReturn:\n    status (str): success/error\n    msg (str): message\n    affinity_probability_binary (float): Represents the predicted probability (ranging from 0 to 1) that a ligand is a binder, making it ideal for distinguishing active compounds from decoys during the hit-discovery stage. A value below 0.5 indicates uncertain or weak binding.\n    affinity_pred_value (float): Estimates the specific binding affinity as log10(IC50) in μM to quantify how small molecular modifications affect potency, serving as a key metric for ligand optimization phases like hit-to-lead and lead-optimization.\n    complex_cif_file (str): Structure file of the protein–molecule complex",
+    "input_schema": {
+      "properties": {
+        "protein": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "smiles": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "protein",
+        "smiles"
+      ],
+      "type": "object"
+    }
+  },
+  "pred_mol_admet": {
+    "description": "Predict the ADMET (absorption, distribution, metabolism, excretion, and toxicity) properties of the input molecules from smiles list or file.\nArgs:\n    smiles_list (List[str]): List of input SMILES strings, (e.g., [\"N[C@@H](Cc1ccc(O)cc1)C(=O)O\", \"CC(C)C1=CC=CC=C1\"]), default is []\n    smiles_file (str): Path to a file containing SMILES strings (TXT or CSV format), default is ''\nReturn:\n    status (str): success/error\n    msg (str): message\n    json_content (List[Dcit]): List of dict, each containing the keys 'smiles', 'physicochemical', 'druglikeness' and 'admet_predictions', where 'admet_predictions' includes over 90 key-value pairs representing various molecular properties \n    json_file (str): Path to the json file saving the ADMET prediction results",
+    "input_schema": {
+      "properties": {
+        "smiles_file": {
+          "default": "",
+          "type": "string"
+        },
+        "smiles_list": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "pred_pocket_prank": {
+    "description": "Use P2Rank to predict ligand binding pockets in the input protein.\nArgs:\n    pdb_file_path (str): Path to the protein structure file (PDB format)\nReturn:\n    status (str): success/error\n    msg (str): message\n    pred_pockets (List[dict]): List of dict, each containing pocket confidence and center position information. The first pocket (pred_pockets[0]) has the highest score and is usually used for molecular docking.\n        --site_id (str): Pocket id\n        --probability (float): Predicted confidence score (0~1) of the pocket\n        --center_x (float): Center X of the pocket\n        --center_y (float): Center Y of the pocket \n        --center_z (float): Center Z of the pocket",
+    "input_schema": {
+      "properties": {
+        "pdb_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "pred_protein_structure_esmfold": {
+    "description": "Use the ESMFold model for protein 3D structure prediction.\nArgs:\n    sequence (str): Protein sequence\nReturn:\n    status: success/error\n    msg: message\n    pdb_path (str): The predicted pdb file path",
+    "input_schema": {
+      "properties": {
+        "sequence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence"
+      ],
+      "type": "object"
+    }
+  },
+  "prepare_complex": {
+    "description": "Prepare a protein-ligand complex with configurable pose/GPU/MD times for gmx_MMPBSA workflow.\nThis step typically follows fix_pdb and prepares the shared work_dir for downstream run_mmpbsa and analyze_mmpbsa in the protein-ligand workflow.\nArgs:\n    protein (str): Path to the protein PDB file (required)\n    ligand (str): Path to the ligand file in pdbqt/sdf/mol2/pdb format (required)\n    pose (int): PDBQT pose index forwarded to ligand processing for multi-pose files (default: 1)\n    gpu_ids (str|None): Comma-separated GPU IDs for GROMACS execution, e.g., '0,1' (default: '0')\n    full_md (bool): Whether to run the full MD workflow (setup+min+equil+prod) after initial setup (default: True)\n    nvt_time (float): NVT equilibration simulation time in picoseconds (default: 1.0)\n    npt_time (float): NPT equilibration simulation time in picoseconds (default: 1.0)\n    md_time (float): Production MD simulation time in picoseconds (default: 100.0)\n    ph (float|None): Optional pH value for ligand protonation state assignment (default: None)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable execution summary or error message\n    run_dir (str): Timestamped run directory under tool_result/gmx_mmpbsa_result\n    output_dir (str): Actual output directory created by prepare_complex_v4 (e.g., protein_ligand_pose1 under run_dir)\n    files (List[str]|None): List of generated files in output_dir when available",
+    "input_schema": {
+      "properties": {
+        "full_md": {
+          "default": true,
+          "type": "boolean"
+        },
+        "gpu_ids": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "0"
+        },
+        "ligand": {
+          "type": "string"
+        },
+        "md_time": {
+          "default": 100,
+          "type": "number"
+        },
+        "npt_time": {
+          "default": 1,
+          "type": "number"
+        },
+        "nvt_time": {
+          "default": 1,
+          "type": "number"
+        },
+        "ph": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pose": {
+          "default": 1,
+          "type": "integer"
+        },
+        "protein": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "protein",
+        "ligand"
+      ],
+      "type": "object"
+    }
+  },
+  "prepare_protein_md": {
+    "description": "Prepare a protein-only GROMACS MD workflow for protein-protein binding free energy analysis.\nThe input must not contain HETATM ligand, water, ion, or cofactor records. The server selects the output directory and reports rejected residues.\nThis step typically follows fix_pdb and provides the MD work_dir for downstream gmx_mmpbsa_propro and analyze_mmpbsa in the protein-protein workflow.\nArgs:\n    protein_pdb (str): Input protein PDB file path (required)\n    full_md (bool): Whether to run the full MD pipeline (setup+min+equil+prod) after initial setup (default: False)\n    md_time (float): Production MD simulation duration in picoseconds (default: 100000.0 = 100 ns)\n    temperature (float): Simulation temperature in Kelvin for thermostat coupling (default: 300.0)\n    nvt_time (float): NVT equilibration duration in picoseconds (default: 100.0)\n    npt_time (float): NPT equilibration duration in picoseconds (default: 100.0)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable execution summary or error message\n    protein_pdb (str): Resolved absolute path of the input protein PDB\n    run_dir (str): Actual run directory (<protein>_MD_<timestamp>) under tool_result/gmx_mmpbsa_result\n    full_md (bool): Whether full MD pipeline was enabled for this run\n    md_time (float): Applied production MD duration in picoseconds\n    temperature (float): Applied simulation temperature in Kelvin\n    nvt_time (float): Applied NVT equilibration duration in picoseconds\n    npt_time (float): Applied NPT equilibration duration in picoseconds\n    files (List[str]): List of generated filenames under run_dir (e.g., em.gro, md.tpr, md.xtc, topol.top)",
+    "input_schema": {
+      "properties": {
+        "full_md": {
+          "default": false,
+          "type": "boolean"
+        },
+        "md_time": {
+          "default": 100000,
+          "type": "number"
+        },
+        "npt_time": {
+          "default": 100,
+          "type": "number"
+        },
+        "nvt_time": {
+          "default": 100,
+          "type": "number"
+        },
+        "protein_pdb": {
+          "type": "string"
+        },
+        "temperature": {
+          "default": 300,
+          "type": "number"
+        }
+      },
+      "required": [
+        "protein_pdb"
+      ],
+      "type": "object"
+    }
+  },
+  "prolif_docking": {
+    "description": "Summarize docking poses with ProLIF and return a CSV of interaction fingerprints plus summary metrics.\nArgs:\n    protein_path (str): Path to the receptor protein file used for docking analysis (required)\n    ligand_paths (List[str]): List of ligand file paths to summarize (required)\n    ligand_format (str): Format of ligand files, e.g., 'sdf', 'mol2', 'pdb' (required)\n    template_smiles (str|None): Optional template SMILES to align or filter ligands\n    interactions (List[str]|None): Optional subset of interaction types to compute\n    count (bool): If True, compute interaction counts rather than binary fingerprints (default: False)\n    vicinity_cutoff (float|None): Optional distance cutoff for vicinity interactions\n    params_json (str|None): Extra ProLIF parameters as JSON string or file path\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary or error message\n    command (str): The subcommand executed ('docking')\n    output_dir (str|None): Run-specific directory under tool_result/prolif_result\n    output_file (str|None): Path to the produced CSV summary file\n    n_frames (int|None): Number of frames processed (if applicable)\n    n_interactions (int|None): Number of interaction types observed across poses\n    frequent_interactions (List[dict]|None): High-frequency interactions (>30%)\n    result_summary (dict|None): Full summary dict from the underlying ProLIF CLI",
+    "input_schema": {
+      "properties": {
+        "count": {
+          "default": false,
+          "type": "boolean"
+        },
+        "interactions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ligand_format": {
+          "type": "string"
+        },
+        "ligand_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "params_json": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "protein_path": {
+          "type": "string"
+        },
+        "template_smiles": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "vicinity_cutoff": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "protein_path",
+        "ligand_paths",
+        "ligand_format"
+      ],
+      "type": "object"
+    }
+  },
+  "prolif_md": {
+    "description": "Compute ProLIF fingerprints for an MD trajectory and return standardized summary metrics.\nArgs:\n    topology_path (str): Path to the system topology file (.psf/.pdb/.prmtop) (required)\n    trajectory_path (str): Path to the trajectory file to analyze (required)\n    ligand_selection (str): Selection string identifying ligand atoms (required)\n    protein_selection (str): Selection string for protein atoms (default: 'protein')\n    interactions (List[str]|None): Optional list of interaction types to compute (e.g., ['hb', 'hydrophobic'])\n    count (bool): If True, compute counts instead of binary fingerprints (default: False)\n    vicinity_cutoff (float|None): Optional distance cutoff for vicinity-based interactions\n    params_json (str|None): Path or JSON string with additional ProLIF parameters\n    start/stop/step (int|None): Optional frame slicing parameters for trajectory\n    residues (List[str]|None): Optional specific residue list to include in analysis\n    all_residues (bool): If True, include all residues regardless of selection (default: False)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary or error message\n    command (str): The subcommand executed ('md')\n    output_dir (str|None): Run-specific directory under tool_result/prolif_result\n    output_file (str|None): Path to the generated CSV file containing fingerprints or counts\n    n_frames (int|None): Number of frames processed from the trajectory\n    n_interactions (int|None): Number of unique interaction types detected\n    frequent_interactions (List[dict]|None): High-frequency interactions (>30%) with 'interaction' and 'frequency' keys\n    result_summary (dict|None): Full summary dict captured from the underlying ProLIF CLI",
+    "input_schema": {
+      "properties": {
+        "all_residues": {
+          "default": false,
+          "type": "boolean"
+        },
+        "count": {
+          "default": false,
+          "type": "boolean"
+        },
+        "interactions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ligand_selection": {
+          "type": "string"
+        },
+        "params_json": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "protein_selection": {
+          "default": "protein",
+          "type": "string"
+        },
+        "residues": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "topology_path": {
+          "type": "string"
+        },
+        "trajectory_path": {
+          "type": "string"
+        },
+        "vicinity_cutoff": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "topology_path",
+        "trajectory_path",
+        "ligand_selection"
+      ],
+      "type": "object"
+    }
+  },
+  "prolif_pdb": {
+    "description": "Analyze a single PDB complex and return interaction fingerprints and summary metrics.\nArgs:\n    structure_path (str): Path to the complex PDB/file to analyze (required)\n    ligand_selection (str): Selection string identifying ligand atoms (required)\n    protein_selection (str): Selection string for protein atoms (default: 'protein')\n    interactions (List[str]|None): Optional list of interaction types to compute\n    count (bool): If True, return counts instead of binary fingerprints (default: False)\n    vicinity_cutoff (float|None): Optional distance cutoff for vicinity interactions\n    params_json (str|None): Extra configuration for ProLIF as JSON or path\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary or error message\n    command (str): The subcommand executed ('pdb')\n    output_dir (str|None): Run-specific directory under tool_result/prolif_result\n    output_file (str|None): Path to the produced CSV file with interaction data\n    n_frames (int|None): Number of frames processed (if applicable, usually 1 for PDB)\n    n_interactions (int|None): Number of interaction types observed\n    frequent_interactions (List[dict]|None): High-frequency interactions (>30%)\n    result_summary (dict|None): Full summary dict from the underlying ProLIF CLI",
+    "input_schema": {
+      "properties": {
+        "count": {
+          "default": false,
+          "type": "boolean"
+        },
+        "interactions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ligand_selection": {
+          "type": "string"
+        },
+        "params_json": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "protein_selection": {
+          "default": "protein",
+          "type": "string"
+        },
+        "structure_path": {
+          "type": "string"
+        },
+        "vicinity_cutoff": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "structure_path",
+        "ligand_selection"
+      ],
+      "type": "object"
+    }
+  },
+  "prolif_protein_protein": {
+    "description": "Analyze a protein–protein trajectory and return interaction fingerprints or counts with summary metrics.\nArgs:\n    topology_path (str): Path to the system topology file (required)\n    trajectory_path (str): Path to the trajectory file to analyze (required)\n    selection_a (str): Selection string for the first protein partner (required)\n    selection_b (str): Selection string for the second protein partner (required)\n    interactions (List[str]|None): Optional interaction types to compute (e.g., ['hb', 'saltbridge'])\n    count (bool): If True, compute counts rather than binary fingerprints (default: False)\n    vicinity_cutoff (float|None): Optional distance cutoff for interaction vicinity\n    params_json (str|None): Extra configuration for ProLIF as JSON or path\n    start/stop/step (int|None): Optional frame slicing parameters for trajectory analysis\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary or error message\n    command (str): The subcommand executed ('protein-protein')\n    output_dir (str|None): Run-specific directory under tool_result/prolif_result\n    output_file (str|None): Path to the generated CSV results file\n    n_frames (int|None): Number of frames processed from the trajectory\n    n_interactions (int|None): Number of interaction types observed between partners\n    frequent_interactions (List[dict]|None): High-frequency interactions (>30%)\n    result_summary (dict|None): Full summary dict from the underlying ProLIF CLI",
+    "input_schema": {
+      "properties": {
+        "count": {
+          "default": false,
+          "type": "boolean"
+        },
+        "interactions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "params_json": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "selection_a": {
+          "type": "string"
+        },
+        "selection_b": {
+          "type": "string"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "topology_path": {
+          "type": "string"
+        },
+        "trajectory_path": {
+          "type": "string"
+        },
+        "vicinity_cutoff": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "topology_path",
+        "trajectory_path",
+        "selection_a",
+        "selection_b"
+      ],
+      "type": "object"
+    }
+  },
+  "protein_openmm_md": {
+    "description": "Run OpenMM protein MD simulation (explicit or implicit solvent) and return run directory plus key artifacts.\nArgs:\n    protein_pdb (str): Input PDB file path for the protein structure (required)\n    solvent_type (str): Solvent model type, either 'explicit' or 'implicit' (default: 'explicit')\n    gb_model (str): Generalized Born solvent model when using implicit solvent (default: 'GBn2')\n    water_model (str): Water model for explicit solvent simulations (default: 'tip3p')\n    force_field (str): Force field to use for parameterization (default: 'amber14')\n    md_time (float): Production MD simulation time in picoseconds (default: 100000 = 100 ns)\n    platform (str): OpenMM compute platform, e.g., 'CUDA', 'OpenCL', 'CPU' (default: 'CUDA')\n    full_md (bool): If True, run the full MD pipeline including minimization, equilibration, and production (default: False)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary or error message\n    command (str): The invoked command ('protein_openmm_md')\n    run_dir (str|None): Path to the finalized run directory under tool_result/openmm_md_result\n    work_dir (str|None): Same as run_dir (for compatibility)\n    trajectory_path (str|None): Path to 'md_traj.dcd' if production run completed\n    energy_log (str|None): Path to 'md.log' containing energy trajectory\n    generated_files (List[str]|None): All files created in the run directory\n    md_time (float|None): Echoed requested MD length in picoseconds\n    solvent_type (str|None): Echoed solvent type used\n    force_field (str|None): Echoed force field used\n    full_md (bool|None): Whether the full pipeline was requested",
+    "input_schema": {
+      "properties": {
+        "force_field": {
+          "default": "amber14",
+          "type": "string"
+        },
+        "full_md": {
+          "default": false,
+          "type": "boolean"
+        },
+        "gb_model": {
+          "default": "GBn2",
+          "type": "string"
+        },
+        "md_time": {
+          "default": 100000,
+          "type": "number"
+        },
+        "platform": {
+          "default": "CUDA",
+          "type": "string"
+        },
+        "protein_pdb": {
+          "type": "string"
+        },
+        "solvent_type": {
+          "default": "explicit",
+          "type": "string"
+        },
+        "water_model": {
+          "default": "tip3p",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protein_pdb"
+      ],
+      "type": "object"
+    }
+  },
+  "proteinmpnn_tool": {
+    "description": "Run ProteinMPNN sequence design or scoring from protein structures with optional interface constraints and amino-acid controls.\nArgs:\n    pdb_input (str): Input PDB file path or directory containing PDB files (required)\n    model_name (str): ProteinMPNN model name, options: ['v_48_002', 'v_48_010', 'v_48_020', 'v_48_030'] (default: 'v_48_020')\n    use_soluble (bool): Whether to use soluble model weights for improved stability (default: False)\n    ca_only (bool): Whether to run C-alpha-only model mode for coarse-grained design (default: False)\n    num_seq (int): Number of sequences to generate per target structure (default: 8)\n    sampling_temp (str): Sampling temperature string; supports multi-temperature values separated by spaces (default: '0.1')\n    chains_to_design (str): Chains to redesign, e.g., 'A' or 'A C'; empty means all chains (default: '')\n    fixed_positions (str): Fixed positions per chain, comma-separated by chain, e.g., 'A:1,2,3;B:5,6' (default: '')\n    specify_non_fixed (bool): If True, listed positions are interpreted as designable (not fixed) (default: False)\n    homooligomer (bool): Whether to enable homooligomer tied-position mode for symmetric complexes (default: False)\n    omit_aas (str): Globally omitted amino acids from design, e.g., 'CX' to omit Cys and unknown (default: 'X')\n    bias_aa (str): Amino-acid bias JSON string, e.g., '{\"A\": 0.5, \"G\": 0.3}' to favor Ala/Gly (default: '')\n    score_only (bool): Whether to run scoring-only mode (evaluate given sequences instead of designing) (default: False)\n    path_to_fasta (str): FASTA file path for scoring mode when score_only is True (default: '')\n    save_probs (bool): Whether to save probability matrices for each designed position (default: False)\n    seed (int): Random seed value for reproducibility (default: 0)\n    skip_check (bool): Whether to skip dependency checks in source workflow for faster startup (default: False)\n    dry_run (bool): Validate inputs and create output directory without running ProteinMPNN pipeline (default: False)\nReturn:\n    status (str): 'success', 'error', or 'partial_success' execution status\n    msg (str): Human-readable execution summary or error message\n    output_dir (str): Unique run directory under tool_result/proteinmpnn_tool_result\n    results_dir (str): Result directory path under output_dir/results containing designed sequences\n    model_name (str): Effective model name used in this run\n    num_seq (int): Effective number of sequences per target used in this run\n    sampling_temp (str): Effective sampling temperature string used in this run\n    score_only (bool): Effective score-only flag used in this run\n    dry_run (bool): Effective dry-run flag used in this run\n    output_files (dict): Key produced output paths including 'seq_dir', 'score_dir', 'prob_dir' when available\n    metrics (dict): Summary metrics such as 'num_seq_files', 'total_sequences', 'score_file_count' when available",
+    "input_schema": {
+      "properties": {
+        "bias_aa": {
+          "default": "",
+          "type": "string"
+        },
+        "ca_only": {
+          "default": false,
+          "type": "boolean"
+        },
+        "chains_to_design": {
+          "default": "",
+          "type": "string"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "fixed_positions": {
+          "default": "",
+          "type": "string"
+        },
+        "homooligomer": {
+          "default": false,
+          "type": "boolean"
+        },
+        "model_name": {
+          "default": "v_48_020",
+          "type": "string"
+        },
+        "num_seq": {
+          "default": 8,
+          "type": "integer"
+        },
+        "omit_aas": {
+          "default": "X",
+          "type": "string"
+        },
+        "path_to_fasta": {
+          "default": "",
+          "type": "string"
+        },
+        "pdb_input": {
+          "type": "string"
+        },
+        "sampling_temp": {
+          "default": "0.1",
+          "type": "string"
+        },
+        "save_probs": {
+          "default": false,
+          "type": "boolean"
+        },
+        "score_only": {
+          "default": false,
+          "type": "boolean"
+        },
+        "seed": {
+          "default": 0,
+          "type": "integer"
+        },
+        "skip_check": {
+          "default": false,
+          "type": "boolean"
+        },
+        "specify_non_fixed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "use_soluble": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pdb_input"
+      ],
+      "type": "object"
+    }
+  },
+  "pulchura_rebuild": {
+    "description": "Rebuilds incomplete protein PDB structures with PULCHRA for structure preparation workflows.\nArgs:\n    input_pdbs (str | List[str]): One input PDB path or a list of input PDB paths.\n    mode (str): Rebuild mode in {'full','backbone','sidechain','hydrogen'}, default 'full'.\n    optimize_hbond (bool): Enable hydrogen-bond optimization, default False.\n    detect_cis_pro (bool): Enable cis-proline detection, default False.\n    verbose (bool): Print verbose PULCHRA logs, default False.\n    preserve_coords (bool): Preserve original coordinates, default False.\n    dry_run (bool): Validate inputs without executing rebuild, default False.\nReturn:\n    status (str): 'success', 'partial_success', or 'error'.\n    msg (str): Human-readable execution summary.\n    output_dir (str): Run-specific directory under tool_result/pulchura_rebuild_result.\n    rebuilt_pdb_files (List[str]): Absolute paths to rebuilt PDB files.",
+    "input_schema": {
+      "properties": {
+        "detect_cis_pro": {
+          "default": false,
+          "type": "boolean"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "input_pdbs": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "mode": {
+          "default": "full",
+          "type": "string"
+        },
+        "optimize_hbond": {
+          "default": false,
+          "type": "boolean"
+        },
+        "preserve_coords": {
+          "default": false,
+          "type": "boolean"
+        },
+        "verbose": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "input_pdbs"
+      ],
+      "type": "object"
+    }
+  },
+  "reinvent_denovo_sampling": {
+    "description": "Generate new molecules de novo.\nArgs:\n    n (int): Number of molecules for sampling\n    lipinski (bool): Whether to apply Lipinski's rule of five filtering, default is True\n    filter_preset (str): Filter preset, options: ['none', 'minimal', 'default', 'strict', 'druglike', 'all'], default is 'druglike'\nReturn:\n    status (str): success/error\n    msg (str): message\n    save_smiles_file (str): Path to the saved SMILES file\n    output_smiles_list (List[str]): List of generated SMILES strings",
+    "input_schema": {
+      "properties": {
+        "filter_preset": {
+          "default": "druglike",
+          "type": "string"
+        },
+        "lipinski": {
+          "default": true,
+          "type": "boolean"
+        },
+        "n": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "type": "object"
+    }
+  },
+  "reinvent_mol2mol_sampling": {
+    "description": "Generate new molecules sampling from the input molecule using different priors ('similarity': broad exploration, 'medium_similarity': balanced exploration, 'high_similarity': conservative optimization, 'scaffold': strict scaffold preservation, 'scaffold_generic': generic scaffold preservation, 'mmp': MMP-style local modifications).\nArgs:\n    smiles (str): Input SMILES string\n    n (int): Number of molecules for sampling\n    min_similarity (float): Required minimum similarity threshold\n    prior_type (str): Required prior type for generation, options: ['scaffold_generic', 'scaffold', 'mmp', 'similarity', 'high_similarity', 'medium_similarity']\n    lipinski (bool): Whether to apply Lipinski's rule of five filtering, default is True\n    filter_preset (str): Filter preset, options: ['none', 'minimal', 'default', 'strict'], default is 'default'\nReturn:\n    status (str): success/error\n    msg (str): message\n    save_smiles_file (str): Path to the saved SMILES file\n    output_smiles_list (List[str]): List of generated SMILES strings",
+    "input_schema": {
+      "properties": {
+        "filter_preset": {
+          "default": "default",
+          "type": "string"
+        },
+        "lipinski": {
+          "default": true,
+          "type": "boolean"
+        },
+        "min_similarity": {
+          "type": "number"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "prior_type": {
+          "type": "string"
+        },
+        "smiles": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "smiles",
+        "n",
+        "min_similarity",
+        "prior_type"
+      ],
+      "type": "object"
+    }
+  },
+  "residue_mapper": {
+    "description": "Map residue numbers between UniProt, PDB, and tool-internal numbering.\nArgs:\n    pdb_path (str): Input protein structure PDB path.\n    uniprot_id (str|None): UniProt accession for online sequence fetch.\n    uniprot_fasta (str|None): Local UniProt FASTA file path.\n    uniprot_seq (str|None): Raw UniProt amino-acid sequence.\n    chain (str|None): Optional chain ID to process.\n    predicted (bool): Use predicted-structure arithmetic mapping mode.\n    input_seq_start (int|None): UniProt index of first input residue when predicted=True.\n    query (str|None): Optional residue query string (e.g., \"Met793,pdb:769,tool:76\").\n    no_dbref (bool): Disable DBREF strategy and force alignment.\n    output_format (str): Mapping output format, csv or json.\n    dry_run (bool): Validate inputs and create run directory without mapping.\n    quiet (bool): Quiet mode flag.\nReturn:\n    status (str): success/error/partial_success.\n    msg (str): Message summary.\n    output_dir (str): Run directory path.\n    mapping_file (str): Relative mapping file path under output_dir.\n    format (str): Output format.\n    total_residues (int): Number of residue mapping rows.\n    matched_residues (int): Number of matched/dbref rows.\n    mismatch_residues (int): Number of mismatch rows.\n    unmapped_residues (int): Number of rows without UniProt index.\n    chains (List[str]): Processed chains.\n    query_results (List[dict]): Query result rows when query is provided.",
+    "input_schema": {
+      "properties": {
+        "chain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "input_seq_start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "no_dbref": {
+          "default": false,
+          "type": "boolean"
+        },
+        "output_format": {
+          "default": "csv",
+          "type": "string"
+        },
+        "pdb_path": {
+          "type": "string"
+        },
+        "predicted": {
+          "default": false,
+          "type": "boolean"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quiet": {
+          "default": false,
+          "type": "boolean"
+        },
+        "uniprot_fasta": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "uniprot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "uniprot_seq": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "pdb_path"
+      ],
+      "type": "object"
+    }
+  },
+  "retrieve_protein_sequence": {
+    "description": "Retrieve protein sequence data for a given identifier (gene name or uniprot id) and organism.\nArgs:\n    identifier (str): Input gene name (e.g., 'TP53') or uniprot id (e.g., 'P04637')\n    organism (str): Species name, default is \"Homo sapiens\" \nReturn:\n    status (str): success/error\n    msg (str): message\n    seq_info (dict): A dict containing uniprot_id, gene_name, protein_name, organism, sequence, length",
+    "input_schema": {
+      "properties": {
+        "identifier": {
+          "type": "string"
+        },
+        "organism": {
+          "default": "Homo sapiens",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier"
+      ],
+      "type": "object"
+    }
+  },
+  "retrieve_protein_structure_by_gene_name": {
+    "description": "Retrieve and download a protein structure (.pdb or .cif) using a standard gene name.\nArgs:\n    gene_name (str): Input gene name (e.g., 'TP53')\n    organism (str): Species NCBI Taxonomy ID (default: 9606 for human, 10090 for mouse)\n    sort_by (str): The sorting strategy defaults ('length') to prioritizing sequence length for maximum coverage, with an alternative option ('resolution') to prioritize structural resolution. \nReturn:\n    status (str): success/error\n    msg (str): message\n    prot_structure_path (str): Path to the downloaded .pdb or .cif structure file.",
+    "input_schema": {
+      "properties": {
+        "gene_name": {
+          "type": "string"
+        },
+        "organism": {
+          "default": "9606",
+          "type": "string"
+        },
+        "sort_by": {
+          "default": "length",
+          "type": "string"
+        }
+      },
+      "required": [
+        "gene_name"
+      ],
+      "type": "object"
+    }
+  },
+  "retrieve_protein_structure_by_pdb_id": {
+    "description": "Retrieve and download a protein structure (.pdb, with automatic .cif fallback) using a PDB ID.\nArgs:\n    pdb_id (str): Input pdb id (e.g., \"2l3r\", \"5XYF\")\nReturn:\n    status (str): success/error\n    msg (str): message\n    prot_structure_path (str): Path to the downloaded .pdb or fallback .cif structure file.",
+    "input_schema": {
+      "properties": {
+        "pdb_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_id"
+      ],
+      "type": "object"
+    }
+  },
+  "retrieve_protein_structure_by_uniprot_id": {
+    "description": "Retrieve and download a protein structure (.pdb or .cif) using a UniProt ID.\nArgs:\n    uniprot_id (str): Input uniprot id (e.g., 'P04637')\n    sort_by (str): The sorting strategy defaults ('length') to prioritizing sequence length for maximum coverage, with an alternative option ('resolution') to prioritize structural resolution. \nReturn:\n    status (str): success/error\n    msg (str): message\n    prot_structure_path (str): Path to the downloaded .pdb or .cif structure file.",
+    "input_schema": {
+      "properties": {
+        "sort_by": {
+          "default": "length",
+          "type": "string"
+        },
+        "uniprot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "uniprot_id"
+      ],
+      "type": "object"
+    }
+  },
+  "retrieve_smiles_by_compoundname": {
+    "description": "Retrieve SMILES strings from PubChem using compound names.\nArgs:\n    compound_names (List[str]): List of input compound names (e.g., [\"aspirin\", \"caffeine\"])\nReturn:\n    status (str): success/partial_success/error\n    msg (str): message\n    retrieve_smiles (List[dict]): List of dict, each containing the keys 'compound_name' and 'smiles'.\n        --compound_name (str): A compound name of compound_names \n        --smiles (str): The retrieved SMILES string, if it exists; otherwise, None.",
+    "input_schema": {
+      "properties": {
+        "compound_names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "compound_names"
+      ],
+      "type": "object"
+    }
+  },
+  "run_bioemu": {
+    "description": "Generate BioEmu conformational samples for a protein sequence and return run metadata plus key artifacts.\nArgs:\n    sequence (str): Input protein sequence string or path readable by BioEmu (required)\n    num_samples (int): Number of conformational samples to generate (required)\n    export_pdbs (bool): If True, export individual PDB files for each sample (default: False)\n    dry_run (bool): If True, validate inputs and create run directory without executing BioEmu (default: False)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable summary or error message\n    command (str): The invoked command ('run_bioemu')\n    run_dir (str|None): Path to the run-specific output directory under tool_result/bioemu_result\n    output_dir (str|None): Same as run_dir (for compatibility)\n    files (List[str]|None): Sorted list of generated files under the run directory\n    pdb_path (str|None): First detected PDB file path if PDB export was enabled\n    xtc_path (str|None): First detected XTC trajectory file path if present\n    sampling_statistics (dict|None): Parsed sampling statistics from sampling_statistics.json if available\n    sampling_statistics_path (str|None): Path to sampling_statistics.json if present\n    sequence_input (str|None): Resolved sequence or input path echoed by BioEmu\n    num_samples_requested (int|None): Number of requested samples echoed back\n    export_pdbs (bool|None): Whether PDB export was requested",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "export_pdbs": {
+          "default": false,
+          "type": "boolean"
+        },
+        "num_samples": {
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence",
+        "num_samples"
+      ],
+      "type": "object"
+    }
+  },
+  "run_mmpbsa": {
+    "description": "Run gmx_MMPBSA on a prepare_complex output directory for protein-ligand binding free energy calculation.\nThis step is the free-energy stage after prepare_complex and before analyze_mmpbsa in the protein-ligand workflow.\nArgs:\n    work_dir (str): Output directory from prepare_complex (must contain em.gro/md.tpr/md.xtc/topol.top and ligand mol2) (required)\n    method (str): Calculation method, options: ['gb', 'pb', 'both'] (default: 'both')\n    nproc (int|str): Parallel process count for gmx_MMPBSA, or 'all' to use all available cores (default: 32)\n    interval (int): Trajectory sampling interval for frame extraction (default: 1)\n    startframe (int): Starting frame index for analysis (default: 1)\n    endframe (int): Ending frame index for analysis (default: 10000000001 = all frames)\n    generate_input (bool): Whether to auto-generate mmpbsa.in parameter file (default: True)\n    dry_run (bool): Validate settings and prepare directory without launching gmx_MMPBSA (default: False)\nReturn:\n    status (str): 'success' or 'error'\n    msg (str): Human-readable execution summary or error message\n    work_dir (str): Input/output working directory path\n    output_dir (str): Same as work_dir; all generated files stay in this directory\n    command (str|None): Executed gmx_MMPBSA command line (if not dry_run)\n    gb_dir (str|None): GB results directory path (work_dir/mmgbsa) when method includes 'gb'\n    pb_dir (str|None): PB results directory path (work_dir/mmpbsa) when method includes 'pb'\n    results (Dict[str, Any]): Summary of FINAL_RESULTS.csv / FINAL_DECOMP.csv including binding energy values",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "endframe": {
+          "default": 10000000001,
+          "type": "integer"
+        },
+        "generate_input": {
+          "default": true,
+          "type": "boolean"
+        },
+        "interval": {
+          "default": 1,
+          "type": "integer"
+        },
+        "method": {
+          "default": "both",
+          "type": "string"
+        },
+        "nproc": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 32
+        },
+        "startframe": {
+          "default": 1,
+          "type": "integer"
+        },
+        "work_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_dir"
+      ],
+      "type": "object"
+    }
+  },
+  "server_file_to_base64": {
+    "description": "Convert files on the server (smaller than 10MB) to Base64 encoding.\nArgs:\n    file_path (str): Path to input file (e.g., /path/a.pdb) \nReturn:\n    status (str): success/error\n    msg (str): message\n    base64_string (str): Converted base64 string for file\n    file_name (str): File name (e.g., a.pdb)",
+    "input_schema": {
+      "properties": {
+        "file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_path"
+      ],
+      "type": "object"
+    }
+  },
+  "visualize_molecule": {
+    "description": "Visualize a molecule and save it as a PNG in a server-managed output directory.\nArgs:\n    input (str): Input molecular file path (.sdf, .smi, .smiles, .mol) or SMILES string\nReturn:\n    status (str): success/error\n    msg (str): message\n    image_path (str): Server-generated path of the molecular structure image",
+    "input_schema": {
+      "properties": {
+        "input": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "input"
+      ],
+      "type": "object"
+    }
+  },
+  "visualize_protein": {
+    "description": "Visualize a PDB protein structure and save it as a PNG in a server-managed output directory.\nArgs:\n    pdb_file_path (str): Input protein file path in PDB format\nReturn:\n    status (str): success/error\n    msg (str): message\n    image_path (str): Server-generated path of the protein structure image",
+    "input_schema": {
+      "properties": {
+        "pdb_file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pdb_file_path"
+      ],
+      "type": "object"
+    }
+  }
+}

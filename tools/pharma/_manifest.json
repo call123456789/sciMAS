@@ -1,0 +1,228 @@
+{
+  "drug-sda": {
+    "server": "pharma-drug-sda",
+    "role_targets": [
+      "computational-chemist",
+      "drug-discovery-scientist",
+      "physical-chemist",
+      "structural-biologist"
+    ],
+    "tools": [
+      "analyze_mmpbsa",
+      "analyze_protein_ligand_interactions",
+      "base64_to_server_file",
+      "calculate_common_fragments",
+      "calculate_dleps_score",
+      "calculate_mol_basic_info",
+      "calculate_mol_charge",
+      "calculate_mol_complexity",
+      "calculate_mol_drug_chemistry",
+      "calculate_mol_hbond",
+      "calculate_mol_hydrophobicity",
+      "calculate_mol_structure_complexity",
+      "calculate_mol_topology",
+      "calculate_morgan_fingerprint_similarity",
+      "calculate_pdb_basic_info",
+      "calculate_pdb_composition_info",
+      "calculate_pdb_quality_metrics",
+      "calculate_pdb_structural_geometry",
+      "calculate_protein_sequence_properties",
+      "chai1_predict",
+      "chroma_complex",
+      "chroma_monomer",
+      "chroma_symmetry",
+      "convert_complex_cif_to_pdb",
+      "convert_pdb_to_pdbqt_dock",
+      "convert_smiles_to_format",
+      "equiscore_pipeline",
+      "equiscore_pocket",
+      "equiscore_screen",
+      "evobind_tool",
+      "extract_and_save_chains",
+      "extract_bioemu_structures",
+      "extract_pdb_chains",
+      "fix_pdb",
+      "foldx_tool",
+      "fpocket_toolkit",
+      "get_pepinvent_info",
+      "gmx_mmpbsa_propro",
+      "goca_pipeline",
+      "hdock_tool",
+      "interaction_visualizer",
+      "is_valid_protein_sequence",
+      "is_valid_smiles",
+      "karmadock_tool",
+      "libinvent_rgroup_sampling_by_scaffold",
+      "libinvent_rgroup_sampling_by_scaffold_name",
+      "linkinvent_linker_sampling_by_warhead_pair_name",
+      "linkinvent_linker_sampling_by_warheads",
+      "molecule_docking_quickvina_fullprocess",
+      "openawsem_sim",
+      "openawsem_traj_extract",
+      "openmm_extract_frames",
+      "pack_sidechains",
+      "pepinvent_peptide_sampling_by_peptide",
+      "pepinvent_peptide_sampling_by_template",
+      "pred_binding_affinity_boltz2",
+      "pred_mol_admet",
+      "pred_pocket_prank",
+      "pred_protein_structure_esmfold",
+      "prepare_complex",
+      "prepare_protein_md",
+      "prolif_docking",
+      "prolif_md",
+      "prolif_pdb",
+      "prolif_protein_protein",
+      "protein_openmm_md",
+      "proteinmpnn_tool",
+      "pulchura_rebuild",
+      "reinvent_denovo_sampling",
+      "reinvent_mol2mol_sampling",
+      "residue_mapper",
+      "retrieve_protein_sequence",
+      "retrieve_protein_structure_by_gene_name",
+      "retrieve_protein_structure_by_pdb_id",
+      "retrieve_protein_structure_by_uniprot_id",
+      "retrieve_smiles_by_compoundname",
+      "run_bioemu",
+      "run_mmpbsa",
+      "server_file_to_base64",
+      "visualize_molecule",
+      "visualize_protein"
+    ],
+    "skills": {
+      "pharma-drug-sda-mol-descriptors": {
+        "role": "drug-discovery-scientist",
+        "tools": [
+          "calculate_mol_basic_info",
+          "calculate_mol_charge",
+          "calculate_mol_complexity",
+          "calculate_mol_drug_chemistry",
+          "calculate_mol_hbond",
+          "calculate_mol_hydrophobicity",
+          "calculate_mol_structure_complexity",
+          "calculate_mol_topology",
+          "is_valid_smiles"
+        ]
+      },
+      "pharma-drug-sda-admet-similarity": {
+        "role": "drug-discovery-scientist",
+        "tools": [
+          "pred_mol_admet",
+          "calculate_dleps_score",
+          "calculate_morgan_fingerprint_similarity",
+          "calculate_common_fragments",
+          "convert_smiles_to_format",
+          "retrieve_smiles_by_compoundname"
+        ]
+      },
+      "pharma-drug-sda-molecule-generation": {
+        "role": "drug-discovery-scientist",
+        "tools": [
+          "reinvent_denovo_sampling",
+          "reinvent_mol2mol_sampling",
+          "libinvent_rgroup_sampling_by_scaffold",
+          "libinvent_rgroup_sampling_by_scaffold_name",
+          "linkinvent_linker_sampling_by_warhead_pair_name",
+          "linkinvent_linker_sampling_by_warheads",
+          "pepinvent_peptide_sampling_by_peptide",
+          "pepinvent_peptide_sampling_by_template",
+          "get_pepinvent_info"
+        ]
+      },
+      "pharma-drug-sda-structure-prediction-design": {
+        "role": "structural-biologist",
+        "tools": [
+          "pred_protein_structure_esmfold",
+          "chai1_predict",
+          "chroma_monomer",
+          "chroma_complex",
+          "chroma_symmetry",
+          "proteinmpnn_tool",
+          "evobind_tool"
+        ]
+      },
+      "pharma-drug-sda-structure-prep": {
+        "role": "structural-biologist",
+        "tools": [
+          "fix_pdb",
+          "pulchura_rebuild",
+          "pack_sidechains",
+          "extract_and_save_chains",
+          "extract_pdb_chains",
+          "convert_complex_cif_to_pdb"
+        ]
+      },
+      "pharma-drug-sda-pdb-utils": {
+        "role": "structural-biologist",
+        "tools": [
+          "calculate_pdb_basic_info",
+          "calculate_pdb_composition_info",
+          "calculate_pdb_quality_metrics",
+          "calculate_pdb_structural_geometry",
+          "calculate_protein_sequence_properties",
+          "is_valid_protein_sequence"
+        ]
+      },
+      "pharma-drug-sda-retrieval-visualization": {
+        "role": "structural-biologist",
+        "tools": [
+          "retrieve_protein_sequence",
+          "retrieve_protein_structure_by_gene_name",
+          "retrieve_protein_structure_by_pdb_id",
+          "retrieve_protein_structure_by_uniprot_id",
+          "visualize_protein",
+          "visualize_molecule",
+          "base64_to_server_file",
+          "server_file_to_base64"
+        ]
+      },
+      "pharma-drug-sda-docking": {
+        "role": "computational-chemist",
+        "tools": [
+          "hdock_tool",
+          "karmadock_tool",
+          "molecule_docking_quickvina_fullprocess",
+          "convert_pdb_to_pdbqt_dock",
+          "prolif_docking",
+          "equiscore_pipeline",
+          "equiscore_pocket",
+          "equiscore_screen",
+          "pred_pocket_prank",
+          "fpocket_toolkit"
+        ]
+      },
+      "pharma-drug-sda-binding-affinity": {
+        "role": "computational-chemist",
+        "tools": [
+          "pred_binding_affinity_boltz2",
+          "foldx_tool",
+          "analyze_protein_ligand_interactions",
+          "interaction_visualizer",
+          "prolif_pdb",
+          "prolif_protein_protein",
+          "residue_mapper"
+        ]
+      },
+      "pharma-drug-sda-md-mmpbsa": {
+        "role": "physical-chemist",
+        "tools": [
+          "protein_openmm_md",
+          "prepare_protein_md",
+          "prepare_complex",
+          "run_mmpbsa",
+          "analyze_mmpbsa",
+          "gmx_mmpbsa_propro",
+          "openmm_extract_frames",
+          "prolif_md",
+          "openawsem_sim",
+          "openawsem_traj_extract",
+          "goca_pipeline",
+          "run_bioemu",
+          "extract_bioemu_structures"
+        ]
+      }
+    },
+    "skipped_unbundled": []
+  }
+}
