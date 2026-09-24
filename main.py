@@ -66,6 +66,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional model flag passed through to Claude CLI.",
     )
     parser.add_argument(
+        "--planner-model",
+        default=None,
+        help="Optional model override for planner and planner-reviewer calls.",
+    )
+    parser.add_argument(
+        "--agent-model",
+        default=None,
+        help="Optional model override for worker and synthesizer calls.",
+    )
+    parser.add_argument(
+        "--planner-base-url",
+        default=None,
+        help="ANTHROPIC_BASE_URL override for planner and planner-reviewer calls.",
+    )
+    parser.add_argument(
+        "--agent-base-url",
+        default=None,
+        help="ANTHROPIC_BASE_URL override for worker and synthesizer calls.",
+    )
+    parser.add_argument(
         "--no-auto-synthesize",
         action="store_true",
         help="Disable the automatic synthesizer pass.",
@@ -77,6 +97,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Planner output mode. python-dsl uses restricted async workflow "
             "source; legacy-json preserves the old JSON topology planner."
+        ),
+    )
+    parser.add_argument(
+        "--workflow-file",
+        type=Path,
+        default=None,
+        help=(
+            "Execute this precomputed Python DSL workflow directly, without "
+            "calling the planner or planner-reviewer."
         ),
     )
     parser.add_argument(
@@ -147,6 +176,18 @@ def main(argv: list[str] | None = None) -> int:
         strict_skill_routing=not args.allow_role_tool_fallback,
         claude_bin=args.claude_bin,
         model=args.model,
+        planner_model=args.planner_model,
+        agent_model=args.agent_model,
+        planner_env_overrides=(
+            {"ANTHROPIC_BASE_URL": args.planner_base_url}
+            if args.planner_base_url
+            else None
+        ),
+        agent_env_overrides=(
+            {"ANTHROPIC_BASE_URL": args.agent_base_url}
+            if args.agent_base_url
+            else None
+        ),
         mcp_config_path="" if args.no_mcp else args.mcp_config,
         allowed_tools=args.allowed_tools,
         permission_mode=args.permission_mode,
@@ -155,10 +196,16 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         planner_mode=args.planner_mode.replace("-", "_"),
     )
+    workflow_file = args.workflow_file.expanduser().resolve() if args.workflow_file else None
+    workflow_source = (
+        workflow_file.read_text(encoding="utf-8") if workflow_file else None
+    )
     report = orchestrator.run(
         problem=problem,
         roles=args.roles,
         auto_synthesize=not args.no_auto_synthesize,
+        workflow_source=workflow_source,
+        workflow_path=str(workflow_file) if workflow_file else None,
     )
 
     print(report.final_answer or report.runs[-1].result)

@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import atexit
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, Optional, Sequence
+
+import agent_sandbox
 
 
 @dataclass
@@ -27,12 +34,62 @@ class ClaudeResult:
     # Optional: not every output format reports these, and callers building a
     # result by hand should not have to invent them.
     total_tokens: Optional[int] = None
+    # Cache writes and cache reads, which the CLI counts separately from
+    # `input_tokens` — that field is *uncached* input only. Cost is priced
+    # against all three, so a token count that drops these cannot be
+    # reconciled with `total_cost_usd`. See `total_input_tokens`.
+    cache_creation_input_tokens: Optional[int] = None
+    cache_read_input_tokens: Optional[int] = None
     started_at: Optional[str] = None
     duration_ms: Optional[int] = None
     # Only populated when stream-json output was requested. Each entry
     # is the short tool name with its parsed input dict (e.g. from an
     # `mcp__<server>__<tool>` use).
     tool_calls: list[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def total_input_tokens(self) -> Optional[int]:
+        """Everything the model read: fresh input + cache writes + reads.
+
+        ``input_tokens`` on its own understates the real input volume by
+        whatever came out of the prompt cache, which on a resumed
+        multi-agent session is most of it. Returns ``None`` only when the
+        CLI reported no input counter at all — a run that reported some of
+        them gets the sum of what it did report.
+        """
+        parts = (
+            self.input_tokens,
+            self.cache_creation_input_tokens,
+            self.cache_read_input_tokens,
+        )
+        if all(part is None for part in parts):
+            return None
+        return sum(part or 0 for part in parts)
+
+
+def _coerce_int(value: Any) -> Optional[int]:
+    """Best-effort int, or ``None`` for a missing or unusable counter.
+
+    Counters are absent whenever the provider reports no usage (an unknown
+    model, or ``--output-format`` with no JSON at all), and are occasionally
+    a string. Neither should raise here: the counter is metadata, and a call
+    that produced a good answer should not be failed over its bookkeeping.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_float(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _load_mcp_local_env(src: Path) -> Dict[str, Dict[str, str]]:
@@ -73,6 +130,223 @@ def _load_mcp_local_env(src: Path) -> Dict[str, Dict[str, str]]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Claude Code state isolation
+# ---------------------------------------------------------------------------
+#
+# Every `claude -p` invocation keeps durable state under one directory:
+# ``$CLAUDE_CONFIG_DIR`` (default ``~/.claude``), which holds
+# ``projects/<cwd-slug>/`` — session transcripts (``*.jsonl``) and the
+# auto-memory store (``MEMORY.md`` plus one file per memory). Left alone, that
+# directory is shared by every sciMAS run on the machine *and* by the
+# operator's own interactive sessions in the same checkout, because the slug is
+# derived from the working directory and all of them run with cwd = the repo
+# root.
+#
+# That sharing is a benchmark-integrity bug, not just untidiness. Auto-memory
+# is injected into the system prompt of every later run, so a run that found
+# the ground-truth file while solving one problem writes a memory pointing at
+# it, and the next run starts already knowing where the answers are. Measured
+# on this repo's deployment: 35 sessions had read a ground-truth path, 20 had
+# pulled gold content back into context, and 24 graded runs across 9 jobs
+# inherited it — including Synthesizer runs, whose output *is* the graded
+# answer.
+#
+# So every run gets its own throwaway state directory, and none of them touch
+# the operator's store. Four things have to keep working while that happens,
+# and each one is the reason for a piece of the code below:
+#
+#   credentials  deployments keep the API token in ``settings.json``'s ``env``
+#                block (not in the sciMAS process environment), and the CLI
+#                does *not* fall back to ``~/.claude`` once
+#                ``CLAUDE_CONFIG_DIR`` is set — so isolating without carrying
+#                the block over breaks every run with an auth error.
+#                `_seed_state_dir` copies it.
+#   resume       ``--resume <session_id>`` re-reads a transcript from the state
+#                directory, so the directory must be stable for the life of one
+#                run. It is: state is keyed by run scope, and no caller resumes
+#                a session captured by a different run (`start_run_state`).
+#   MCP          MCP servers are spawned by the CLI from ``--mcp-config`` and
+#                read nothing out of the state directory, so tool calls are
+#                unaffected. Verified A/B against the real config/mcp.json
+#                servers: ``mcp__litsearch__search_literature`` is available
+#                either way.
+#   isolation    the boundary is the run, not the process: the dashboard is
+#                long-lived and runs jobs back to back, so a process-wide
+#                directory would let job N+1's agents read job N's transcripts.
+#
+# ``SCIMAS_CLAUDE_STATE=shared`` restores the old shared-directory behaviour
+# (for debugging an interactive-style run); ``SCIMAS_CLAUDE_STATE_DIR`` pins
+# where state goes, which must be *outside* the repo — state inside the repo is
+# readable by the next agent, which is the problem being solved.
+_state_isolated: bool = (
+    os.environ.get("SCIMAS_CLAUDE_STATE", "").strip().lower() != "shared"
+)
+_state_root: Optional[str] = os.environ.get("SCIMAS_CLAUDE_STATE_DIR") or None
+_state_scope: str = "default"
+# Set once per process, and only in temp mode: the parent of every per-run
+# directory, removed at exit along with everything under it.
+_state_temp_root: Optional[str] = None
+# Directories already seeded, so credentials are copied once per run.
+_state_seeded: set = set()
+_state_lock = threading.Lock()
+def set_claude_state_isolated(enabled: bool) -> None:
+    """Give every run its own Claude Code state dir (default: on).
+
+    Pass ``False`` to inherit the shared ``~/.claude`` store again — that
+    re-enables cross-run memory leakage, so it is only for debugging.
+    """
+    global _state_isolated
+    _state_isolated = bool(enabled)
+
+
+def get_claude_state_isolated() -> bool:
+    return _state_isolated
+
+
+def set_claude_state_root(path: Optional[str]) -> None:
+    """Pin the directory that holds each run's state; ``None`` = system temp.
+
+    This is a parent directory, not the state directory itself: each run gets
+    ``<root>/<scope>`` under it. The path must be outside the repo — whatever
+    lands there is readable by agents running with cwd = the repo root — and
+    unlike the temp default it is never deleted, for postmortem inspection.
+    """
+    global _state_root, _state_temp_root
+    _state_root = str(Path(path).expanduser()) if path else None
+    _state_temp_root = None
+
+
+def get_claude_state_root() -> Optional[str]:
+    return _state_root
+
+
+def start_run_state(label: Optional[str] = None) -> str:
+    """Start a fresh state scope and return its directory.
+
+    Call once per job/batch before its agents run. Without it, one process
+    keeps a single scope, which is correct for a one-run process and a leak
+    for a queue of them.
+    """
+    global _state_scope
+    with _state_lock:
+        _state_scope = _scope_name(label)
+    # Outside the lock: `claude_state_dir` takes it too.
+    return claude_state_dir()
+
+
+def claude_state_dir() -> str:
+    """Return the current run's state directory, creating and seeding it once."""
+    with _state_lock:
+        return _ensure_state_dir(_state_scope)
+
+
+def state_dir_for(scope: Optional[str]) -> str:
+    """The state directory for ``scope``, without touching the current scope.
+
+    For a process that runs jobs concurrently: each job passes its scope to its
+    own runners (``ClaudeRunner(state_scope=...)``) instead of racing to set
+    one process-wide value, which would let two jobs swap state directories.
+    """
+    with _state_lock:
+        return _ensure_state_dir(_scope_name(scope))
+
+
+def _ensure_state_dir(scope: str) -> str:
+    """Create and seed ``<root>/<scope>`` once. Caller holds ``_state_lock``."""
+    path = Path(_state_root) / scope if _state_root else _temp_scope_dir(scope)
+    if str(path) not in _state_seeded:
+        path.mkdir(parents=True, exist_ok=True)
+        _seed_state_dir(path)
+        _state_seeded.add(str(path))
+    return str(path)
+
+
+def _temp_scope_dir(scope: str) -> Path:
+    """``<per-process temp root>/<scope>``, removed when the process exits."""
+    global _state_temp_root
+    if _state_temp_root is None:
+        _state_temp_root = tempfile.mkdtemp(prefix="scimas-claude-state-")
+        atexit.register(shutil.rmtree, _state_temp_root, True)
+    return Path(_state_temp_root) / scope
+
+
+_mask_temp_dir: Optional[str] = None
+
+
+def _mask_source_file(state_dir: Optional[str] = None) -> tuple[str, str]:
+    """``(directory, empty file)`` standing in for masked files.
+
+    bubblewrap needs the replacement to exist when it builds the mounts, and to
+    be visible in the sandbox — so it has to sit under a directory that gets
+    bound back in past the private ``/tmp``. The state directory is already
+    bound for credentials; without state isolation the file gets a directory of
+    its own, which the caller binds for the same reason.
+    """
+    global _mask_temp_dir
+    if state_dir:
+        directory = Path(state_dir)
+    elif _state_isolated:
+        directory = Path(claude_state_dir())
+    else:
+        if _mask_temp_dir is None:
+            _mask_temp_dir = tempfile.mkdtemp(prefix="scimas-mask-")
+            atexit.register(shutil.rmtree, _mask_temp_dir, True)
+        directory = Path(_mask_temp_dir)
+    path = directory / "mask-empty"
+    if not path.exists():
+        path.touch()
+    return str(directory), str(path)
+
+
+def _scope_name(label: Optional[str]) -> str:
+    """A filesystem-safe directory name for one job/batch."""
+    if not label:
+        return "default"
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "-" for ch in str(label))
+    return safe.strip("-.")[:64] or "default"
+
+
+def _state_source_dir() -> Path:
+    """The operator's own config dir — where credentials are read from."""
+    configured = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    return Path(configured).expanduser() if configured else Path.home() / ".claude"
+
+
+def _seed_state_dir(path: Path) -> None:
+    """Copy credentials (and nothing else) into a fresh state directory.
+
+    Only the ``env`` block is taken from ``settings.json``: the rest of that
+    file (hooks, plugins, statusline) describes an interactive setup whose
+    files live in the original config dir, and copying it would point the
+    agent at paths that are not in the new one. Conversation state — memory,
+    transcripts, history — is deliberately never copied; that is the leak.
+    """
+    source = _state_source_dir()
+    try:
+        raw = json.loads((source / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = None
+    if isinstance(raw, dict):
+        env = raw.get("env")
+        if isinstance(env, dict) and env:
+            target = path / "settings.json"
+            with target.open("w", encoding="utf-8") as handle:
+                target.chmod(0o600)
+                json.dump({"env": {str(k): str(v) for k, v in env.items()}}, handle)
+    credentials = source / ".credentials.json"
+    if credentials.is_file():
+        target = path / ".credentials.json"
+        try:
+            shutil.copyfile(credentials, target)
+            target.chmod(0o600)
+        except OSError as exc:
+            print(
+                f"claude_runner: cannot carry credentials from {credentials}: {exc}",
+                file=sys.stderr,
+            )
+
+
 class ClaudeRunner:
     def __init__(
         self,
@@ -84,9 +358,24 @@ class ClaudeRunner:
         dangerously_skip_permissions: bool = True,
         extra_system_prompt: Optional[str] = None,
         timeout: Optional[float] = 600.0,
+        env_overrides: Optional[Dict[str, str]] = None,
+        state_scope: Optional[str] = None,
+        sandbox_hide: Sequence[str] = (),
+        sandbox_writable: Sequence[str] = (),
     ):
         self.binary = binary
         self.model = model
+        self.env_overrides = dict(env_overrides or {})
+        # This runner's state scope and filesystem boundary. Both fall back to
+        # process-wide behaviour (the scope `start_run_state` last set, and no
+        # sandbox at all), which is what a one-run process wants. A long-lived
+        # process that runs jobs concurrently — the dashboard takes a new job
+        # per request — must pass them per runner instead: two jobs sharing one
+        # process-wide value hand each other their boundaries, and with them
+        # the directories each is allowed to write.
+        self.state_scope = str(state_scope) if state_scope else None
+        self.sandbox_hide = tuple(str(p) for p in sandbox_hide)
+        self.sandbox_writable = tuple(str(p) for p in sandbox_writable)
         # Three-way contract — callers must pick the right one:
         #
         #   None  -> auto-detect config/mcp.json next to this file
@@ -122,6 +411,9 @@ class ClaudeRunner:
         if allowed_tools is None:
             allowed_tools = ["*"] if self.mcp_config_path else []
         self.allowed_tools: Sequence[str] = list(allowed_tools) if allowed_tools else []
+        # Per-allowlist narrowed configs, keyed by the server set. See
+        # `_mcp_config_for`; the values are paths on disk.
+        self._narrowed_configs: Dict[frozenset, Optional[str]] = {}
 
         self.permission_mode = permission_mode
         self.dangerously_skip_permissions = dangerously_skip_permissions
@@ -278,28 +570,239 @@ class ClaudeRunner:
                 return {}
         return {}
 
+    @staticmethod
+    def _usage_counters(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Pull the session/token/cost counters out of a CLI result payload.
+
+        Shared by both output paths so a change lands in one place: ``json``
+        puts these at the top level of its single result object while
+        ``stream-json`` buries the same object in the terminal ``result``
+        event, and the two paths had drifted into copies of the same six
+        lookups.
+
+        The cache counters are reported alongside ``input_tokens`` rather
+        than folded into it, so a caller can still tell a cache hit from
+        fresh context; ``total_input_tokens`` on the result sums them.
+        """
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
+
+        def pick(name: str) -> Any:
+            # `is not None` rather than truthiness: a genuine 0 (no cache
+            # writes on a short call) must not fall through to the nested
+            # block and pick up a different counter.
+            for source in (payload, usage):
+                value = source.get(name)
+                if value is not None:
+                    return value
+            return None
+
+        # Both of these are genuine two-name fallbacks — older CLI releases
+        # spelled them differently — not payload-vs-usage lookups.
+        total_cost = payload.get("total_cost_usd")
+        if total_cost is None:
+            total_cost = payload.get("cost_usd")
+        session_value = payload.get("session_id")
+        if session_value is None:
+            session_value = payload.get("sessionId")
+
+        return {
+            "session_id": str(session_value) if session_value is not None else None,
+            "total_cost_usd": _coerce_float(total_cost),
+            "total_tokens": _coerce_int(payload.get("total_tokens")),
+            "input_tokens": _coerce_int(pick("input_tokens")),
+            "output_tokens": _coerce_int(pick("output_tokens")),
+            "cache_creation_input_tokens": _coerce_int(
+                pick("cache_creation_input_tokens")
+            ),
+            "cache_read_input_tokens": _coerce_int(pick("cache_read_input_tokens")),
+        }
+
+    @classmethod
+    def _build_result(
+        cls,
+        *,
+        raw_stdout: str,
+        raw_json: Dict[str, Any],
+        result: str,
+        stderr: str,
+        started_at: str,
+        duration_ms: int,
+        tool_calls: Optional[Iterable[Dict[str, Any]]] = None,
+    ) -> ClaudeResult:
+        """Assemble a ``ClaudeResult``, filling the counters from ``raw_json``."""
+        return ClaudeResult(
+            raw_stdout=raw_stdout,
+            raw_json=raw_json,
+            result=result,
+            stderr=stderr,
+            started_at=started_at,
+            duration_ms=duration_ms,
+            tool_calls=list(tool_calls or []),
+            **cls._usage_counters(raw_json),
+        )
+
+    @staticmethod
+    def _servers_for_tools(effective_tools: Sequence[str]) -> Optional[set[str]]:
+        """Which MCP servers a session with this allowlist can actually call.
+
+        Returns ``None`` when the allowlist cannot be narrowed safely, which
+        makes the caller fall back to the full config:
+
+        - A bare ``"*"`` — ``ClaudeRunner``'s own default when the caller
+          passes no allowlist — permits every tool of every server, so there
+          is nothing to narrow to.
+        - ``mcp__*`` / ``mcp__*__tool``: the server position is itself a
+          wildcard, so the set is not enumerable.
+        - An allowlist with no ``mcp__`` entry at all yields the empty set,
+          meaning the session can call no MCP tool whatever we attach.
+
+        Otherwise the answer is exact rather than a heuristic: every entry is
+        spelled ``mcp__<server>__<tool>``, so the servers a step needs are
+        literally written in its allowlist. Built-in entries (``Read``,
+        ``Bash(npm run:*)``, ...) cannot match an ``mcp__`` tool and are
+        skipped.
+        """
+        if not effective_tools:
+            return set()
+        servers: set[str] = set()
+        for tool in effective_tools:
+            name = str(tool).strip()
+            if not name:
+                continue
+            if not name.startswith("mcp__"):
+                if name == "*":
+                    return None
+                continue
+            parts = name.split("__")
+            if len(parts) < 2 or not parts[1]:
+                return None
+            if "*" in parts[1]:
+                return None
+            servers.add(parts[1])
+        return servers
+
+    def _mcp_config_for(self, effective_tools: Sequence[str]) -> Optional[str]:
+        """The ``--mcp-config`` to hand a session with this allowlist.
+
+        Why this is not simply ``self.mcp_config_path``: ``claude -p`` builds
+        the session's tool registry from the MCP servers that have finished
+        connecting at the moment it emits ``init``, and a server still
+        ``pending`` contributes *no* tools at all. It starts servers in config
+        order with bounded concurrency, so with config/mcp.json's 39 entries
+        only the first few are ever ready in time — measured on a 96-core
+        host, exactly 2 (``chemistry-computational``, ``litsearch``) were
+        connected at init, and the rest were missing no matter what
+        ``MCP_TIMEOUT`` was set to.
+
+        That made which runs worked a matter of luck: a step whose skill
+        routed to ``chemistry-physical`` (config entry #6) hit "No such tool
+        available" even though the server came up fine moments later, while a
+        step routing to ``chemistry-computational`` (#3) worked.
+
+        Handing over a config containing only the servers this allowlist
+        names puts them at the front of a pool of one or two, so the race is
+        gone by construction — and it stops spawning ~37 processes that the
+        step could never call into.
+        """
+        if not self.mcp_config_path:
+            return None
+        servers = self._servers_for_tools(effective_tools)
+        if servers is None:
+            return self.mcp_config_path
+        if not servers:
+            # No MCP tool is callable; attaching servers would only burn
+            # startup time on servers the CLI would refuse to expose.
+            return None
+        return self._narrowed_config(servers)
+
+    def _narrowed_config(self, servers: set[str]) -> Optional[str]:
+        """Write (once) a config holding only ``servers``, preserving order."""
+        key = frozenset(servers)
+        if key in self._narrowed_configs:
+            return self._narrowed_configs[key]
+
+        result: Optional[str] = self.mcp_config_path
+        try:
+            src = Path(self.mcp_config_path)
+            data = json.loads(src.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                f"claude_runner: cannot narrow {self.mcp_config_path}: {exc}; "
+                "using the full config",
+                file=sys.stderr,
+            )
+            self._narrowed_configs[key] = result
+            return result
+
+        available = data.get("mcpServers")
+        if isinstance(available, dict):
+            # Iterate the source dict so the servers keep their relative
+            # order — the CLI starts them in file order.
+            selected = {name: available[name] for name in available if name in servers}
+            missing = sorted(servers - set(available))
+            if missing:
+                print(
+                    "claude_runner: allowlist names server(s) absent from "
+                    f"{src.name}: {', '.join(missing)}",
+                    file=sys.stderr,
+                )
+            if selected:
+                data["mcpServers"] = selected
+                digest = hashlib.sha1(
+                    ",".join(sorted(servers)).encode("utf-8")
+                ).hexdigest()[:8]
+                out = src.with_name(f"{src.stem}.tools-{digest}.json")
+                try:
+                    # Write-then-rename: concurrent steps may narrow to the
+                    # same set, and os.replace keeps every reader seeing a
+                    # complete file.
+                    tmp = out.with_name(f"{out.name}.{os.getpid()}.tmp")
+                    tmp.write_text(
+                        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    os.replace(tmp, out)
+                    result = str(out)
+                except OSError as exc:
+                    print(
+                        f"claude_runner: cannot write {out}: {exc}; using the "
+                        "full config",
+                        file=sys.stderr,
+                    )
+
+        self._narrowed_configs[key] = result
+        return result
+
     def _build_cmd(
         self,
         prompt: str,
         session_id: Optional[str],
         output_format: str,
         allowed_tools: Optional[Sequence[str]] = None,
+        mcp_config_path: Optional[str] = None,
+        model: Optional[str] = None,
+        prompt_in_stdin: bool = False,
     ) -> list[str]:
         # Per-call override falls back to the runner-level default.
         effective_tools = list(allowed_tools) if allowed_tools is not None else list(self.allowed_tools)
+        if mcp_config_path is None:
+            mcp_config_path = self._mcp_config_for(effective_tools)
         cmd = [self.binary, "-p"]
         if output_format:
             cmd.extend(["--output-format", output_format])
         if session_id:
             cmd.extend(["--resume", session_id])
-        if self.model:
-            cmd.extend(["--model", self.model])
-        if self.mcp_config_path and effective_tools:
+        effective_model = self.model if model is None else (model.strip() or None)
+        if effective_model:
+            cmd.extend(["--model", effective_model])
+        if mcp_config_path and effective_tools:
             # `--mcp-config` is variadic in recent Claude Code releases.
             # Passing the path as the next argv item can make the final prompt
             # get parsed as another config path. The `--flag=value` form keeps
             # the prompt unambiguous.
-            cmd.append(f"--mcp-config={self.mcp_config_path}")
+            cmd.append(f"--mcp-config={mcp_config_path}")
         if effective_tools:
             # The CLI flag is variadic: each tool must be its own
             # `--allowedTools <name>` argument. Space-joining into a single
@@ -320,8 +823,118 @@ class ClaudeRunner:
             cmd.append("--verbose")
         if self.extra_system_prompt:
             cmd.extend(["--append-system-prompt", self.extra_system_prompt])
-        cmd.append(prompt)
+        if not prompt_in_stdin:
+            cmd.append(prompt)
         return cmd
+
+    def _state_dir(self) -> Optional[str]:
+        """The config dir this runner's CLI will use; None when not isolated."""
+        if not _state_isolated:
+            # Debug mode: the shared store, shared on purpose.
+            return None
+        if self.state_scope:
+            return state_dir_for(self.state_scope)
+        return claude_state_dir()
+
+    def _sandbox_declared(self) -> bool:
+        """Whether this runner's CLI will actually be wrapped.
+
+        Checked without building the prefix, which is the only place a missing
+        bubblewrap under ``SCIMAS_SANDBOX=require`` is fatal — here it just
+        means no boundary, so a caller can decide where to put a file the CLI
+        has to read.
+        """
+        if not self.sandbox_hide and not self.sandbox_writable:
+            return False
+        return (
+            agent_sandbox.sandbox_mode() != "off"
+            and agent_sandbox.bubblewrap() is not None
+        )
+
+    def _scratch_dir(self) -> Optional[str]:
+        """A writable directory the sandboxed CLI can see.
+
+        ``/tmp`` is a private tmpfs inside the sandbox, so a temporary file the
+        harness creates there is invisible to the CLI — while the CLI is told
+        to read it by path. The directories bound back in past the tmpfs (the
+        state directory, and the mask source's directory when state isolation
+        is off) stay visible, so anything the CLI has to read goes in one of
+        them. ``None`` means "not sandboxed", where the system temp is right.
+        """
+        if not self._sandbox_declared():
+            return None
+        return _mask_source_file(self._state_dir())[0]
+
+    def _sandboxed(self, cmd: list[str]) -> list[str]:
+        """Wrap the CLI argv in the filesystem sandbox, when one is declared."""
+        hide = self.sandbox_hide
+        writable = list(self.sandbox_writable)
+        if not hide and not writable:
+            return cmd
+        state_dir = self._state_dir()
+        if state_dir:
+            # The sandbox gives /tmp a private tmpfs, and the state directory
+            # — the one holding the carried-over credentials — lives there.
+            # Without this bind the CLI would start with no auth at all.
+            writable.append(state_dir)
+        mask_dir, mask_file = _mask_source_file(state_dir)
+        if mask_dir not in writable:
+            writable.append(mask_dir)
+        prefix = agent_sandbox.build_prefix(hide, writable, mask_source=mask_file)
+        return cmd if prefix is None else prefix + cmd
+
+    def _subprocess_env(
+        self,
+        env_overrides: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
+        """Build the environment for one Claude CLI invocation."""
+        env = os.environ.copy()
+        # Inject the active conda env's bin/ at the front of PATH so MCP
+        # servers spawned by the claude CLI subprocess inherit the right
+        # Python (with rdkit, matplotlib, etc.).
+        conda_prefix = env.get("CONDA_PREFIX", "")
+        if conda_prefix and conda_prefix != "/opt/anaconda3":
+            scimas_bin = os.path.join(conda_prefix, "bin")
+            env["PATH"] = scimas_bin + os.pathsep + env.get("PATH", "")
+            env["CONDA_PREFIX"] = conda_prefix
+            env["CONDA_DEFAULT_ENV"] = env.get("CONDA_DEFAULT_ENV", "scimas")
+        # Keep this run's state out of the shared store. Applied *before* the
+        # caller overrides below, so a caller that names its own
+        # CLAUDE_CONFIG_DIR — or wants auto-memory back — still wins. See the
+        # state-isolation note above.
+        state_dir = self._state_dir()
+        if state_dir:
+            env["CLAUDE_CONFIG_DIR"] = state_dir
+            env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+        env.update({k: v for k, v in self.env_overrides.items() if v is not None})
+        if env_overrides:
+            env.update({k: v for k, v in env_overrides.items() if v is not None})
+        return env
+
+    @contextmanager
+    def _invocation_settings(
+        self, env_overrides: Optional[Dict[str, str]] = None,
+    ) -> Iterator[Optional[str]]:
+        overrides = {
+            k: v for k, v in {**self.env_overrides, **(env_overrides or {})}.items()
+            if v is not None
+        }
+        if not overrides:
+            yield None
+            return
+        # CLI --settings beats user/project settings.env. Keep credentials out
+        # of argv, use a private file per call, and remove it even on failure.
+        # Under a sandbox it has to live where the CLI can still see it — the
+        # private tmpfs over /tmp would swallow the default location and the
+        # call would silently run with the wrong endpoint or key.
+        with tempfile.TemporaryDirectory(
+            prefix="scimas-claude-", dir=self._scratch_dir()
+        ) as directory:
+            path = Path(directory) / "settings.json"
+            with path.open("x", encoding="utf-8") as settings_file:
+                path.chmod(0o600)
+                json.dump({"env": overrides}, settings_file)
+            yield str(path)
 
     def run(
         self,
@@ -330,41 +943,59 @@ class ClaudeRunner:
         session_id: Optional[str] = None,
         output_format: str = "json",
         allowed_tools: Optional[Sequence[str]] = None,
+        model: Optional[str] = None,
+        env_overrides: Optional[Dict[str, str]] = None,
     ) -> ClaudeResult:
         self._ensure_available()
 
-        # When an MCP stdio server is attached, `claude -p` needs to own
-        # stdin to talk to the server. We therefore cannot pipe the
-        # orchestrator's context bundle through stdin. Inline the bundle
-        # into the prompt so the model still receives it.
-        if self.mcp_config_path and stdin_text:
-            effective_prompt = (
-                f"{prompt}\n\n--- stdin context (inlined because MCP "
-                f"server is using stdio) ---\n{stdin_text}"
-            )
-            stdin_to_send = None
-        else:
-            effective_prompt = prompt
-            stdin_to_send = stdin_text
+        # Resolved here and handed to `_build_cmd` so the narrowing happens
+        # once per call.
+        effective_tools = (
+            list(allowed_tools) if allowed_tools is not None else list(self.allowed_tools)
+        )
+        mcp_config_path = self._mcp_config_for(effective_tools)
 
-        cmd = self._build_cmd(effective_prompt, session_id, output_format, allowed_tools)
+        # Keep task content out of argv. Some dashboard workflows hand a later
+        # agent the outputs of several earlier agents, and the bwrap prefix adds
+        # hundreds of mount arguments on Linux. Putting the prompt on argv can
+        # then exceed ARG_MAX before the Claude CLI even starts.
+        stdin_parts = [prompt]
+        if stdin_text:
+            stdin_parts.extend(["", "--- stdin context ---", stdin_text])
+        stdin_to_send = "\n".join(stdin_parts)
+
+        cmd = self._build_cmd(
+            "",
+            session_id,
+            output_format,
+            effective_tools,
+            mcp_config_path,
+            model,
+            prompt_in_stdin=True,
+        )
 
         started = time.monotonic()
         started_at = datetime.now(timezone.utc).isoformat()
 
-        if output_format == "stream-json":
-            return self._run_stream_json(
-                cmd, stdin_to_send, started_at, started
-            )
+        with self._invocation_settings(env_overrides) as settings_path:
+            if settings_path:
+                cmd[1:1] = ["--settings", settings_path]
+            # After the settings insertion, which assumes cmd[0] is the binary.
+            cmd = self._sandboxed(cmd)
+            if output_format == "stream-json":
+                return self._run_stream_json(
+                    cmd, stdin_to_send, started_at, started, env_overrides
+                )
 
-        proc = subprocess.run(
-            cmd,
-            input=stdin_to_send,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=self.timeout,
-        )
+            proc = subprocess.run(
+                cmd,
+                input=stdin_to_send,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=self.timeout,
+                env=self._subprocess_env(env_overrides),
+            )
         duration_ms = int((time.monotonic() - started) * 1000)
         raw_stdout = proc.stdout.strip()
         if proc.returncode != 0 and not raw_stdout:
@@ -374,24 +1005,10 @@ class ClaudeRunner:
             )
 
         raw_json = self._coerce_json(raw_stdout)
-        result_text = str(raw_json.get("result", raw_stdout))
-        usage = raw_json.get("usage") if isinstance(raw_json.get("usage"), dict) else {}
-
-        session_value = raw_json.get("session_id") or raw_json.get("sessionId")
-        total_cost = raw_json.get("total_cost_usd") or raw_json.get("cost_usd")
-        total_tokens = raw_json.get("total_tokens")
-        input_tokens = raw_json.get("input_tokens") or usage.get("input_tokens")
-        output_tokens = raw_json.get("output_tokens") or usage.get("output_tokens")
-
-        return ClaudeResult(
+        return self._build_result(
             raw_stdout=raw_stdout,
             raw_json=raw_json,
-            result=result_text,
-            session_id=str(session_value) if session_value is not None else None,
-            total_cost_usd=float(total_cost) if total_cost is not None else None,
-            total_tokens=int(total_tokens) if total_tokens is not None else None,
-            input_tokens=int(input_tokens) if input_tokens is not None else None,
-            output_tokens=int(output_tokens) if output_tokens is not None else None,
+            result=str(raw_json.get("result", raw_stdout)),
             stderr=proc.stderr.strip(),
             started_at=started_at,
             duration_ms=duration_ms,
@@ -403,26 +1020,14 @@ class ClaudeRunner:
         stdin_text: Optional[str],
         started_at: str,
         started_monotonic: float,
+        env_overrides: Optional[Dict[str, str]] = None,
     ) -> ClaudeResult:
         """Run claude -p with ``--output-format stream-json`` and parse
         the event stream. Each line of stdout is one JSON event; we
         collect ``content_block_delta`` text fragments into ``result``,
         and every ``tool_use`` block into ``tool_calls``.
         """
-        # Inject the active conda env's bin/ at the front of PATH so
-        # MCP servers spawned by the claude CLI subprocess inherit the
-        # right Python (with rdkit, matplotlib, etc.). Without this,
-        # ``$PATH`` resolves to base env's python inside the MCP child
-        # process even when the runner itself is launched from
-        # ``conda activate scimas`` — see #rdkit-not-installed in the
-        # post-port batch results.
-        env = os.environ.copy()
-        conda_prefix = env.get("CONDA_PREFIX", "")
-        if conda_prefix and conda_prefix != "/opt/anaconda3":
-            scimas_bin = os.path.join(conda_prefix, "bin")
-            env["PATH"] = scimas_bin + os.pathsep + env.get("PATH", "")
-            env["CONDA_PREFIX"] = conda_prefix
-            env["CONDA_DEFAULT_ENV"] = env.get("CONDA_DEFAULT_ENV", "scimas")
+        env = self._subprocess_env(env_overrides)
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE if stdin_text else subprocess.DEVNULL,
@@ -506,27 +1111,17 @@ class ClaudeRunner:
         # The stream typically ends with a single ``result`` event
         # carrying the same payload the JSON format would. Use it for
         # usage / cost / session_id when present; fall back to joined
-        # text.
-        usage = final.get("usage", {}) if isinstance(final.get("usage"), dict) else {}
-        session_value = final.get("session_id") or final.get("sessionId")
-        total_cost = final.get("total_cost_usd") or final.get("cost_usd")
-        total_tokens = final.get("total_tokens")
-        input_tokens = final.get("input_tokens") or usage.get("input_tokens")
-        output_tokens = final.get("output_tokens") or usage.get("output_tokens")
+        # text. When no ``result`` event arrived, `raw_json` carries the
+        # stream placeholder and every counter comes back ``None``.
         result_text = (
             final.get("result")
             if isinstance(final, dict) and final.get("result")
             else "".join(text_chunks)
         )
-        return ClaudeResult(
+        return self._build_result(
             raw_stdout="\n".join(raw_lines),
             raw_json=final if final else {"stream": True, "tool_calls": tool_calls},
             result=str(result_text or ""),
-            session_id=str(session_value) if session_value is not None else None,
-            total_cost_usd=float(total_cost) if total_cost is not None else None,
-            total_tokens=int(total_tokens) if total_tokens is not None else None,
-            input_tokens=int(input_tokens) if input_tokens is not None else None,
-            output_tokens=int(output_tokens) if output_tokens is not None else None,
             stderr=proc.stderr.read() if proc.stderr else "",
             started_at=started_at,
             duration_ms=duration_ms,

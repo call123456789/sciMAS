@@ -42,6 +42,12 @@ class WorkflowValue:
     node_id: str
     value: Any
     role: str = ""
+    # The agent's reply verbatim. ``value`` may be a JSON fragment lifted out of
+    # that reply (see ``coerce_agent_result``), which is useful for downstream
+    # ``verification["passed"]`` lookups but is a poor final answer: prose that
+    # happens to contain "[0, 1]" would be reported as the answer. Keeping the
+    # original lets the formatter fall back to what the agent actually said.
+    text: str = ""
 
     def __getitem__(self, key: Any) -> Any:
         return self.value[key]
@@ -246,25 +252,8 @@ def _escape_raw_control_chars(text: str) -> str:
     return "".join(out)
 
 
-def extract_json_value(text: str) -> tuple[bool, Any]:
-    """Return ``(found, value)`` for JSON embedded in model output.
-
-    Reviewers, planners and agents are all asked for "strict JSON only" but
-    routinely add a sentence before or after it, wrap it in a fence, or emit
-    unescaped newlines inside a string value. Each candidate is tried verbatim
-    and then after control-character repair; the first one that decodes wins.
-    Preserves a top-level array or scalar, so callers that need the raw shape
-    (agent results) are not forced into a wrapper object.
-    """
-
-    if not text:
-        return False, None
-
-    stripped = text.strip()
-    candidates: list[str] = [stripped]
-    candidates.extend(_fence_bodies(stripped))
-    candidates.extend(_balanced_json_spans(stripped))
-
+def _first_decodable(candidates: Iterable[str]) -> tuple[bool, Any]:
+    """Return the first candidate that decodes, then after control-char repair."""
     seen: set[str] = set()
     for candidate in candidates:
         if not candidate or candidate in seen:
@@ -276,6 +265,51 @@ def extract_json_value(text: str) -> tuple[bool, Any]:
             except json.JSONDecodeError:
                 continue
     return False, None
+
+
+def extract_json_value(text: str) -> tuple[bool, Any]:
+    """Return ``(found, value)`` for JSON embedded in model output.
+
+    Reviewers, planners and agents are all asked for "strict JSON only" but
+    routinely add a sentence before or after it, wrap it in a fence, or emit
+    unescaped newlines inside a string value. Each candidate is tried verbatim
+    and then after control-character repair; the first one that decodes wins.
+    Preserves a top-level array or scalar, so callers that need the raw shape
+    (agent results) are not forced into a wrapper object.
+
+    Deliberately *lenient*: it will also take a bare ``[...]``/``{...}`` span
+    out of running prose. That is what makes ``verification["passed"]`` work
+    when a reply opens with a sentence, but it also means a sentence like
+    "normalized to [0, 1]" decodes to the list ``[0, 1]``. Callers that need
+    the reply's *payload* rather than a convenient fragment want
+    ``extract_explicit_json_value``.
+    """
+    if not text:
+        return False, None
+
+    stripped = text.strip()
+    candidates: list[str] = [stripped]
+    candidates.extend(_fence_bodies(stripped))
+    candidates.extend(_balanced_json_spans(stripped))
+    return _first_decodable(candidates)
+
+
+def extract_explicit_json_value(text: str) -> tuple[bool, Any]:
+    """Return ``(found, value)`` for JSON the reply *declares* as its payload.
+
+    Only the whole reply or a fenced block counts — the ``_balanced_json_spans``
+    fallback is left out on purpose. A fence is the model saying "this block is
+    the data"; an unadorned ``[0, 1]`` inside a sentence is a coincidence of
+    punctuation, and treating it as the payload silently replaces a prose
+    answer (see ``orchestrator._format_workflow_result``).
+    """
+    if not text:
+        return False, None
+
+    stripped = text.strip()
+    candidates: list[str] = [stripped]
+    candidates.extend(_fence_bodies(stripped))
+    return _first_decodable(candidates)
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
@@ -382,6 +416,36 @@ def make_json_safe(value: Any) -> Any:
     return str(value)
 
 
+def workflow_guarantees_return(statements: list[ast.stmt]) -> bool:
+    """True when every path through the workflow body ends in a ``return``.
+
+    A body that can finish without returning yields ``None``, which is not "no
+    answer" anywhere downstream: ``_format_workflow_result`` serializes it and
+    the judge is handed the four-character answer ``null``. Measured on
+    2026-09-20 — a planner emitted a workflow whose last statement was
+    ``if review["passed"]: final = await agent(...)`` with no ``else``, the
+    review came back false, and the run burned 30 tool calls to answer nothing.
+
+    Only the last statement can let control escape, so only it is inspected.
+    The DSL has no ``while``/``try``/``with``, so the forms to consider are:
+    ``return`` (guarantees), ``if`` whose *both* arms guarantee (a missing
+    ``else`` falls through), and everything else — including a ``for``, whose
+    body may never execute because ``range(0)`` is a legal loop.
+    """
+    if not statements:
+        return False
+    last = statements[-1]
+    if isinstance(last, ast.Return):
+        return True
+    if isinstance(last, ast.If):
+        return (
+            bool(last.orelse)
+            and workflow_guarantees_return(last.body)
+            and workflow_guarantees_return(last.orelse)
+        )
+    return False
+
+
 class _WorkflowValidator:
     _reserved_names = {"agent", "parallel", "range"}
 
@@ -413,6 +477,18 @@ class _WorkflowValidator:
         self._validate_arguments(func.args)
         self._collect_assigned_names(func.body)
         self._validate_block(func.body, loop_depth=0)
+        # Checked after `_validate_block` so a body with a deeper problem (an
+        # unsupported statement, a bad range) reports that first — the planner's
+        # reviewer only gets one error string per round.
+        if not workflow_guarantees_return(func.body):
+            raise WorkflowDSLValidationError(
+                "The workflow must end by returning its answer, and every path "
+                "through the body must reach a `return <value>`. It does not: "
+                "control can fall off the end, which makes the run's answer "
+                "None — reported downstream as the literal answer `null`. Make "
+                "the last statement a `return`, and if it is an `if` that "
+                "guards the answer, add an `else` that returns a value too."
+            )
 
     def _validate_arguments(self, args: ast.arguments) -> None:
         if (

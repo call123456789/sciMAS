@@ -1,7 +1,7 @@
 """Tests for ClaudeRunner._resolve_mcp_config — the runtime mcp.json rewriter.
 
 Run with:
-    cd /Users/a123/Documents/games/sciMAS
+    cd "$(git rev-parse --show-toplevel)"
     python -m pytest tests/test_mcp_config_resolver.py -v
 """
 
@@ -134,6 +134,35 @@ def test_disabled_mcp_emits_no_mcp_config_flag() -> None:
     runner = ClaudeRunner(binary="claude", mcp_config_path="")
     cmd = runner._build_cmd("PROMPT", None, "stream-json", ["mcp__litsearch__search_literature"])
     assert not any(arg.startswith("--mcp-config") for arg in cmd)
+
+
+def test_build_cmd_can_override_model_per_call() -> None:
+    runner = ClaudeRunner(binary="claude", model="default-model", mcp_config_path="")
+
+    default_cmd = runner._build_cmd("PROMPT", None, "stream-json", [])
+    override_cmd = runner._build_cmd(
+        "PROMPT", None, "stream-json", [], model="planner-model"
+    )
+
+    assert default_cmd[default_cmd.index("--model") + 1] == "default-model"
+    assert override_cmd[override_cmd.index("--model") + 1] == "planner-model"
+
+
+def test_subprocess_env_merges_runner_and_per_call_overrides() -> None:
+    runner = ClaudeRunner(
+        mcp_config_path="",
+        env_overrides={"ANTHROPIC_BASE_URL": "https://runner.example"},
+    )
+
+    env = runner._subprocess_env(
+        {
+            "ANTHROPIC_BASE_URL": "https://call.example",
+            "ANTHROPIC_API_KEY": "call-key",
+        }
+    )
+
+    assert env["ANTHROPIC_BASE_URL"] == "https://call.example"
+    assert env["ANTHROPIC_API_KEY"] == "call-key"
 
 
 def test_scimas_mcp_no_proxy_injects_bypass(

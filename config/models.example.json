@@ -1,0 +1,25 @@
+{
+  "models": {
+    "provider-a-planner": {
+      "label": "Planner model / Provider A",
+      "provider": "Provider A",
+      "model": "replace-with-provider-a-model-id",
+      "base_url": "https://provider-a.example.com/anthropic",
+      "api_key_env": "PROVIDER_A_API_KEY"
+    },
+    "provider-b-worker": {
+      "label": "Worker model / Provider B",
+      "provider": "Provider B",
+      "model": "replace-with-provider-b-model-id",
+      "base_url": "https://provider-b.example.com/anthropic",
+      "auth_token_env": "PROVIDER_B_API_KEY",
+      "env": {
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+      }
+    }
+  },
+  "defaults": {
+    "planner": "provider-a-planner",
+    "agent": "provider-b-worker"
+  }
+}

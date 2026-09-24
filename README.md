@@ -33,7 +33,7 @@ flags: `--roles` to whitelist planner roles, `--planner-mode`, `--model`,
 - **`legacy-json`** — the planner emits a JSON topology, and the orchestrator
   runs those roles in order. Select with `--planner-mode legacy-json`.
 
-See [PLANNER_REVIEWER.md](PLANNER_REVIEWER.md).
+See [PLANNER_REVIEWER.md](docs/PLANNER_REVIEWER.md).
 
 ## Layout
 
@@ -150,5 +150,5 @@ caveats are in **[tests/README.md](tests/README.md)**.
 ## Docs
 
 - [tests/README.md](tests/README.md) — benchmark harness, flags, grading
-- [PLANNER_REVIEWER.md](PLANNER_REVIEWER.md) — the two-agent validation system
-- [DATASETS_ANALYSIS.md](DATASETS_ANALYSIS.md) — dataset-by-dataset analysis
+- [PLANNER_REVIEWER.md](docs/PLANNER_REVIEWER.md) — the two-agent validation system
+- [DATASETS_ANALYSIS.md](docs/DATASETS_ANALYSIS.md) — dataset-by-dataset analysis

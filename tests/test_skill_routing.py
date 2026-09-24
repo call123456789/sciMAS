@@ -57,7 +57,7 @@ class SkillRoutingTests(unittest.TestCase):
         self.assertTrue(all(tool.startswith("mcp__pharma-data__") for tool in tools))
         self.assertIn("mcp__pharma-data__fetch_chembl_activities", tools)
 
-    def test_pharma_molecule_skill_includes_local_checkpoint_tools(self) -> None:
+    def test_pharma_molecule_skill_uses_remote_generation(self) -> None:
         tools = allowed_tools_for_role(
             "drug discovery scientist",
             selected_skills=["pharma-molecule-generation"],
@@ -67,7 +67,8 @@ class SkillRoutingTests(unittest.TestCase):
 
         self.assertIn("mcp__pharma-drug-discovery__list_madd_local_checkpoints", tools)
         self.assertIn("mcp__pharma-drug-discovery__predict_with_local_madd_checkpoint", tools)
-        self.assertIn("mcp__pharma-drug-discovery__generate_molecules_with_local_madd", tools)
+        self.assertIn("mcp__pharma-drug-discovery__generate_molecules_by_case", tools)
+        self.assertNotIn("mcp__pharma-drug-discovery__generate_molecules_with_local_madd", tools)
 
     def test_strict_skill_routing_does_not_fallback_to_whole_role(self) -> None:
         tools = allowed_tools_for_role(

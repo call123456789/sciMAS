@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
 @dataclass
@@ -117,6 +117,10 @@ class PlannerRun:
     duration_ms: Optional[int] = None
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
+    # Keep separate from `input_tokens`, which the CLI reports as uncached
+    # input only; `sum_run_usage` folds them together for reporting.
+    cache_creation_input_tokens: Optional[int] = None
+    cache_read_input_tokens: Optional[int] = None
     cost_usd: Optional[float] = None
     stderr: str = ""
     # Populated when the planner is invoked with --output-format stream-json.
@@ -153,6 +157,10 @@ class AgentRun:
     duration_ms: Optional[int] = None
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
+    # See `PlannerRun`: uncached input and the two cache counters are kept
+    # apart here and summed only at reporting time.
+    cache_creation_input_tokens: Optional[int] = None
+    cache_read_input_tokens: Optional[int] = None
     cost_usd: Optional[float] = None
     stderr: str = ""
     # Resumed from a previous session within the same role? If so this
@@ -192,3 +200,75 @@ class RunReport:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
         }
+
+
+# The run-metric counters every PlannerRun/AgentRun carries, and the exact
+# set `grade_problem` accepts. Kept as one list so the dataclasses, the
+# summation below, and the grader cannot drift apart — a counter recorded on
+# the dataclasses but missing here is precisely how token usage came to be
+# captured per call and never totalled.
+RUN_USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "cost_usd",
+    "duration_ms",
+)
+
+
+def total_tokens(source: Any) -> int:
+    """Grand total the model processed, in tokens.
+
+    Accepts either a `sum_run_usage` mapping or any single record carrying
+    the same counters (``PlannerRun``, ``AgentRun``, ``GradingResult``), so
+    the batch total and a one-problem line share this definition.
+
+    "Input" here means input as the API bills it: fresh input plus cache
+    writes plus cache reads. That is the number to read next to ``cost_usd``
+    — ``input_tokens`` alone excludes the cache counters, so it understates
+    a resumed session by most of its context.
+    """
+    def counter(name: str) -> Any:
+        if isinstance(source, dict):
+            return source.get(name)
+        return getattr(source, name, None)
+
+    return sum(
+        int(counter(name) or 0)
+        for name in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
+    )
+
+
+def sum_run_usage(runs: Iterable[Any]) -> Dict[str, Any]:
+    """Sum per-invocation usage counters across a run's calls.
+
+    Returns exactly the run-metric keywords ``grade_problem`` takes, so a
+    caller splats the result straight in. Entries may be ``PlannerRun`` or
+    ``AgentRun``; ``None`` entries are skipped, which lets a caller write
+    ``sum_run_usage([report.planner, *report.runs])`` without a guard.
+
+    Note this is called with ``report.runs`` alone to keep aggregate costs
+    comparable with runs recorded before the planner was measured. The
+    planner is a real, separately-recorded invocation, so folding it in
+    would raise every historical total; pass it in explicitly if you want
+    that.
+
+    ``None`` counts as 0: the CLI omits counters it cannot report (an
+    unknown model, a text-only output format), and a batch total should be
+    the sum of what was reported rather than ``None``.
+    """
+    totals: Dict[str, Any] = {name: 0 for name in RUN_USAGE_FIELDS}
+    for run in runs:
+        if run is None:
+            continue
+        for name in RUN_USAGE_FIELDS:
+            value = getattr(run, name, None)
+            if value is not None:
+                totals[name] += value
+    return totals

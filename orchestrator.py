@@ -10,7 +10,7 @@ import threading
 from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from claude_runner import ClaudeRunner
 from plan import AgentResult, AgentRun, ExecutionPlan, PlanStep, PlannerRun, RunReport
@@ -21,6 +21,7 @@ from workflow_dsl import (
     coerce_agent_result,
     collect_workflow_dependencies,
     collect_workflow_values,
+    extract_explicit_json_value,
     extract_json_object,
     make_json_safe,
     parse_and_validate_workflow,
@@ -742,7 +743,6 @@ PHARMA_SERVER_TOOLS: dict[str, tuple[str, ...]] = {
         "evaluate_druglikeness",
         "list_madd_local_checkpoints",
         "predict_with_local_madd_checkpoint",
-        "generate_molecules_with_local_madd",
         "draw_molecules",
         "generate_molecules_by_case",
         "predict_properties_by_smiles",
@@ -1083,9 +1083,24 @@ def _truncate(text: str, n: int) -> str:
 
 
 def _format_workflow_result(value: Any) -> str:
+    text = value.text if isinstance(value, WorkflowValue) else ""
+
     value = unwrap_workflow_value(value)
     if isinstance(value, str):
         return value
+
+    if text:
+        # ``value`` can be a JSON fragment that was merely *lifted out of* the
+        # reply, so re-derive it under the strict rule: only the whole reply or
+        # a fenced block counts as the agent declaring a payload. Otherwise the
+        # reply is the answer, and dumping a guessed fragment would answer a
+        # question nobody asked — a reply explaining "the scale is *not*
+        # normalized to [0, 1]" once finished as the final answer ``[0, 1]``.
+        found, explicit = extract_explicit_json_value(text)
+        if not found:
+            return text
+        value = explicit
+
     try:
         return json.dumps(make_json_safe(value), ensure_ascii=False, indent=2)
     except TypeError:
@@ -1162,7 +1177,23 @@ class _WorkflowRuntime:
         workflow = namespace.get("workflow")
         if workflow is None:
             raise RuntimeError("Validated workflow did not define workflow().")
-        return await workflow(self.problem)
+        final = await workflow(self.problem)
+        if final is None:
+            # `workflow_guarantees_return` rejects a body that can fall off the
+            # end, but `return None` is a legal constant, so this is the only
+            # guard against a workflow that answers nothing. It must not reach
+            # the report: `_format_workflow_result` would serialize it as the
+            # literal answer `null` and the judge would grade that. Raising
+            # instead routes into the execution-retry path, where the reviewer
+            # is asked to fix the workflow.
+            raise RuntimeError(
+                "Workflow returned no value (None). Its final statement must "
+                "return the answer — a bare `return`/`return None`, or a "
+                "branch that ends without assigning the result, leaves the run "
+                "with nothing to report. Last line: "
+                f"{program.source.strip().splitlines()[-1].strip()!r}."
+            )
+        return final
 
     async def agent(
         self,
@@ -1301,7 +1332,8 @@ class _WorkflowRuntime:
                 and had_skill_candidates
             ),
         )
-        result = self.orchestrator.runner.run(
+        result = self.orchestrator._runner_run(
+            scope="agent",
             prompt=step_prompt,
             stdin_text=context,
             session_id=previous_session,
@@ -1339,6 +1371,8 @@ class _WorkflowRuntime:
             duration_ms=result.duration_ms,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
+            cache_creation_input_tokens=result.cache_creation_input_tokens,
+            cache_read_input_tokens=result.cache_read_input_tokens,
             cost_usd=result.total_cost_usd,
             stderr=result.stderr,
             public_output=make_json_safe(agent_result.output),
@@ -1349,6 +1383,7 @@ class _WorkflowRuntime:
             node_id=node_id,
             value=agent_result.output,
             role=role_name,
+            text=result.result,
         )
         with self._lock:
             self.runs.append(run)
@@ -1402,6 +1437,10 @@ class SciMASOrchestrator:
         strict_skill_routing: bool = True,
         claude_bin: str = "claude",
         model: Optional[str] = None,
+        planner_model: Optional[str] = None,
+        agent_model: Optional[str] = None,
+        planner_env_overrides: Optional[Dict[str, str]] = None,
+        agent_env_overrides: Optional[Dict[str, str]] = None,
         mcp_config_path: Optional[str] = None,
         allowed_tools: Optional[List[str]] = None,
         permission_mode: str = "bypassPermissions",
@@ -1409,8 +1448,12 @@ class SciMASOrchestrator:
         extra_system_prompt: Optional[str] = None,
         timeout: Optional[float] = 600.0,
         planner_mode: str = "python_dsl",
+        planner_guidance: Optional[str] = None,
         event_callback: Optional[Callable[[dict[str, Any]], None]] = None,
         max_review_attempts: int = 3,
+        state_scope: Optional[str] = None,
+        sandbox_hide: Sequence[str] = (),
+        sandbox_writable: Sequence[str] = (),
     ):
         if planner_mode not in {"python_dsl", "legacy_json"}:
             raise ValueError("planner_mode must be 'python_dsl' or 'legacy_json'.")
@@ -1428,6 +1471,19 @@ class SciMASOrchestrator:
         self.use_skill_routing = use_skill_routing
         self.strict_skill_routing = strict_skill_routing
         self.planner_mode = planner_mode
+        self.planner_guidance = (planner_guidance or "").strip()
+        self.planner_model = (
+            planner_model or os.environ.get("SCIMAS_PLANNER_MODEL") or None
+        )
+        self.agent_model = (
+            agent_model or os.environ.get("SCIMAS_AGENT_MODEL") or None
+        )
+        self.planner_env_overrides = self._scoped_claude_env_overrides(
+            "PLANNER", planner_env_overrides
+        )
+        self.agent_env_overrides = self._scoped_claude_env_overrides(
+            "AGENT", agent_env_overrides
+        )
         self.event_callback = event_callback
         self.skills = load_scimas_skills(self.skill_dir) if use_skill_routing else {}
         # Build a per-tool spec index from `tools/*/*_server.py`. Eager; one
@@ -1437,6 +1493,10 @@ class SciMASOrchestrator:
         self.tool_specs: Dict[str, ToolSpec] = build_tool_spec_index(
             Path(__file__).resolve().parent / "tools"
         )
+        # `state_scope` / `sandbox_*` are forwarded so this runner carries its
+        # own Claude Code state directory and filesystem boundary. A caller
+        # that replaces `self.runner` (tests/runner.py, web_dashboard.py) has
+        # to pass them to its own runner too — see `claude_runner`.
         self.runner = ClaudeRunner(
             binary=claude_bin,
             model=model,
@@ -1446,7 +1506,79 @@ class SciMASOrchestrator:
             dangerously_skip_permissions=dangerously_skip_permissions,
             extra_system_prompt=extra_system_prompt,
             timeout=timeout,
+            state_scope=state_scope,
+            sandbox_hide=sandbox_hide,
+            sandbox_writable=sandbox_writable,
         )
+
+    @staticmethod
+    def _scoped_claude_env_overrides(
+        scope: str,
+        explicit: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
+        """Return per-scope Claude CLI env overrides.
+
+        This lets two sciMAS processes on the same server use different Claude
+        endpoints without touching shared `.claude/settings.json` files.
+        """
+        env: Dict[str, str] = {}
+
+        def first_env(*names: str) -> str:
+            for name in names:
+                value = (os.environ.get(name) or "").strip()
+                if value:
+                    return value
+            return ""
+
+        base_url = first_env(
+            f"SCIMAS_{scope}_ANTHROPIC_BASE_URL",
+            f"SCIMAS_{scope}_BASE_URL",
+            f"SCIMAS_{scope}_API_BASE",
+        )
+        api_key = first_env(f"SCIMAS_{scope}_ANTHROPIC_API_KEY")
+        auth_token = first_env(f"SCIMAS_{scope}_ANTHROPIC_AUTH_TOKEN")
+        if base_url:
+            env["ANTHROPIC_BASE_URL"] = base_url
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+        if auth_token:
+            env["ANTHROPIC_AUTH_TOKEN"] = auth_token
+        if explicit:
+            # Empty strings deliberately clear inherited authentication/routing.
+            env.update({k: v for k, v in explicit.items() if v is not None})
+        return env
+
+    def _runner_run(
+        self,
+        *,
+        scope: str,
+        prompt: str,
+        stdin_text: Optional[str] = None,
+        session_id: Optional[str] = None,
+        output_format: str = "json",
+        allowed_tools: Optional[Sequence[str]] = None,
+    ):
+        kwargs: Dict[str, Any] = {}
+        if scope == "planner":
+            if self.planner_model:
+                kwargs["model"] = self.planner_model
+            if self.planner_env_overrides:
+                kwargs["env_overrides"] = self.planner_env_overrides
+        else:
+            if self.agent_model:
+                kwargs["model"] = self.agent_model
+            if self.agent_env_overrides:
+                kwargs["env_overrides"] = self.agent_env_overrides
+        call_kwargs: Dict[str, Any] = {
+            "prompt": prompt,
+            "stdin_text": stdin_text,
+            "output_format": output_format,
+            "allowed_tools": allowed_tools,
+            **kwargs,
+        }
+        if session_id is not None:
+            call_kwargs["session_id"] = session_id
+        return self.runner.run(**call_kwargs)
 
     def _emit_event(self, event: dict[str, Any]) -> None:
         if not self.event_callback:
@@ -1501,7 +1633,8 @@ class SciMASOrchestrator:
                 "as \\n."
             )
 
-        result = self.runner.run(
+        result = self._runner_run(
+            scope="planner",
             prompt=reviewer_prompt,
             stdin_text=json.dumps(context, ensure_ascii=False, indent=2),
             output_format="stream-json",
@@ -1580,10 +1713,12 @@ class SciMASOrchestrator:
             return self._planner_json_prompt(problem, roles)
         prompt = self._load_prompt("planner")
         role_list = ", ".join(sorted({self.normalize_role(role) for role in roles}))
+        guidance = self._planner_guidance_block()
         return (
             f"{prompt}\n\n"
             "Available roles:\n"
             f"{role_list}\n\n"
+            f"{guidance}"
             "The stdin payload contains the scientific problem.\n"
             "Return only Python source code for async def workflow(task)."
         )
@@ -1596,13 +1731,20 @@ class SciMASOrchestrator:
             else self._legacy_json_planner_prompt_text()
         )
         role_list = ", ".join(sorted({self.normalize_role(role) for role in roles}))
+        guidance = self._planner_guidance_block()
         return (
             f"{prompt}\n\n"
             "Available roles:\n"
             f"{role_list}\n\n"
+            f"{guidance}"
             "The stdin payload contains the scientific problem.\n"
             "Return strict JSON only."
         )
+
+    def _planner_guidance_block(self) -> str:
+        if not self.planner_guidance:
+            return ""
+        return f"Planner guidance:\n{self.planner_guidance}\n\n"
 
     @staticmethod
     def _legacy_json_planner_prompt_text() -> str:
@@ -1794,7 +1936,8 @@ class SciMASOrchestrator:
         prompt = self._skill_selection_prompt(role, available)
         context = self._skill_selection_context(problem, plan, step, history)
         try:
-            result = self.runner.run(
+            result = self._runner_run(
+                scope="agent",
                 prompt=prompt,
                 stdin_text=context,
                 output_format="stream-json",
@@ -1890,7 +2033,8 @@ class SciMASOrchestrator:
         self, problem: str, roles: Iterable[str]
     ) -> tuple[ExecutionPlan, PlannerRun]:
         prompt = self._planner_prompt(problem, roles)
-        result = self.runner.run(
+        result = self._runner_run(
+            scope="planner",
             prompt=prompt,
             stdin_text=problem,
             output_format="stream-json",
@@ -1917,6 +2061,8 @@ class SciMASOrchestrator:
             duration_ms=result.duration_ms,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
+            cache_creation_input_tokens=result.cache_creation_input_tokens,
+            cache_read_input_tokens=result.cache_read_input_tokens,
             cost_usd=result.total_cost_usd,
             stderr=result.stderr,
             tool_calls=list(result.tool_calls),
@@ -1932,7 +2078,8 @@ class SciMASOrchestrator:
 
         # Stage 1: Planner generates initial workflow
         prompt = self._planner_prompt(problem, roles)
-        result = self.runner.run(
+        result = self._runner_run(
+            scope="planner",
             prompt=prompt,
             stdin_text=problem,
             output_format="stream-json",
@@ -2045,9 +2192,60 @@ class SciMASOrchestrator:
             duration_ms=result.duration_ms,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
+            cache_creation_input_tokens=result.cache_creation_input_tokens,
+            cache_read_input_tokens=result.cache_read_input_tokens,
             cost_usd=result.total_cost_usd,
             stderr=result.stderr,
             tool_calls=list(result.tool_calls),
+        )
+        return plan, planner
+
+    def _plan_precomputed_workflow(
+        self,
+        problem: str,
+        roles: Iterable[str],
+        workflow_source: str,
+        workflow_path: Optional[str] = None,
+    ) -> tuple[ExecutionPlan, PlannerRun]:
+        """Validate a supplied DSL workflow without invoking a planner model."""
+        self.active_roles = tuple(
+            sorted({self.normalize_role(role) for role in roles if role})
+        ) or DEFAULT_PLANNER_ROLES
+        program = parse_and_validate_workflow(
+            workflow_source,
+            role_check=self._workflow_role_check,
+            allowed_roles=self.active_roles,
+        )
+        plan = ExecutionPlan(
+            problem_summary="Precomputed Python DSL workflow.",
+            topology_rationale=(
+                "Topology was loaded from a local workflow file and is encoded "
+                "by its async control flow."
+            ),
+            final_role="workflow",
+            termination_criterion="workflow(task) returns a final value.",
+            mode="python_dsl",
+            workflow_source=program.source,
+            workflow_static_trace=program.static_trace,
+        )
+        source_label = workflow_path or "<precomputed-workflow>"
+        planner = PlannerRun(
+            prompt_path=source_label,
+            assembled_prompt="",
+            problem_text=problem,
+            raw_stdout=program.source,
+            raw_json={
+                "result": program.source,
+                "planning_source": "precomputed",
+                "workflow_path": workflow_path or "",
+            },
+            parsed_plan=plan.to_dict(),
+            duration_ms=0,
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            cost_usd=0.0,
         )
         return plan, planner
 
@@ -2056,24 +2254,41 @@ class SciMASOrchestrator:
         problem: str,
         roles: Optional[List[str]] = None,
         auto_synthesize: bool = True,
+        workflow_source: Optional[str] = None,
+        workflow_path: Optional[str] = None,
     ) -> RunReport:
         from datetime import datetime, timezone
 
         run_started_at = datetime.now(timezone.utc).isoformat()
         roles = roles or list(DEFAULT_PLANNER_ROLES)
+        planning_source = "precomputed" if workflow_source is not None else "planner"
         self._emit_event(
             {
                 "event": "planner_started",
                 "problem": problem,
                 "roles": roles,
-                "planner_mode": self.planner_mode,
+                "planner_mode": (
+                    "python_dsl" if workflow_source is not None else self.planner_mode
+                ),
+                "planning_source": planning_source,
+                "workflow_path": workflow_path or "",
             }
         )
-        plan, planner = self.plan(problem, roles)
+        if workflow_source is not None:
+            plan, planner = self._plan_precomputed_workflow(
+                problem,
+                roles,
+                workflow_source,
+                workflow_path,
+            )
+        else:
+            plan, planner = self.plan(problem, roles)
         self._emit_event(
             {
                 "event": "planner_finished",
                 "plan": plan.to_dict(),
+                "planning_source": planning_source,
+                "workflow_path": workflow_path or "",
                 "planner": {
                     "session_id": planner.session_id,
                     "duration_ms": planner.duration_ms,
@@ -2088,6 +2303,7 @@ class SciMASOrchestrator:
                 plan=plan,
                 planner=planner,
                 started_at=run_started_at,
+                allow_reviewer_repair=workflow_source is None,
             )
 
         ordered_steps = plan.ordered_steps()
@@ -2126,7 +2342,8 @@ class SciMASOrchestrator:
                     and had_skill_candidates
                 ),
             )
-            result = self.runner.run(
+            result = self._runner_run(
+                scope="agent",
                 prompt=step_prompt,
                 stdin_text=context,
                 session_id=previous_session,
@@ -2164,6 +2381,8 @@ class SciMASOrchestrator:
                 duration_ms=result.duration_ms,
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
+                cache_creation_input_tokens=result.cache_creation_input_tokens,
+                cache_read_input_tokens=result.cache_read_input_tokens,
                 cost_usd=result.total_cost_usd,
                 stderr=result.stderr,
                 public_output=coerce_agent_result(result.result),
@@ -2220,7 +2439,8 @@ class SciMASOrchestrator:
             synth_context = self._context_bundle(problem, plan, synth_step, synth_history)
             previous_synth_session = None
             synth_allowed_tools = allowed_tools_for_role("synthesizer")
-            synth_result = self.runner.run(
+            synth_result = self._runner_run(
+                scope="agent",
                 prompt=synth_prompt,
                 stdin_text=synth_context,
                 session_id=previous_synth_session,
@@ -2249,6 +2469,8 @@ class SciMASOrchestrator:
                     duration_ms=synth_result.duration_ms,
                     input_tokens=synth_result.input_tokens,
                     output_tokens=synth_result.output_tokens,
+                    cache_creation_input_tokens=synth_result.cache_creation_input_tokens,
+                    cache_read_input_tokens=synth_result.cache_read_input_tokens,
                     cost_usd=synth_result.total_cost_usd,
                     stderr=synth_result.stderr,
                     public_output=coerce_agent_result(synth_result.result),
@@ -2308,14 +2530,15 @@ class SciMASOrchestrator:
         plan: ExecutionPlan,
         planner: PlannerRun,
         started_at: str,
+        allow_reviewer_repair: bool = True,
     ) -> RunReport:
         """Execute a Python DSL workflow with error recovery."""
         from datetime import datetime, timezone
 
-        MAX_EXECUTION_RETRIES = 2
+        max_execution_attempts = 2 if allow_reviewer_repair else 1
         runtime = _WorkflowRuntime(self, problem, plan)
 
-        for attempt in range(1, MAX_EXECUTION_RETRIES + 1):
+        for attempt in range(1, max_execution_attempts + 1):
             try:
                 final_value = asyncio.run(runtime.run(plan.workflow_source))
                 # Success - workflow executed
@@ -2328,10 +2551,16 @@ class SciMASOrchestrator:
                     "error": execution_error,
                 })
 
-                if attempt >= MAX_EXECUTION_RETRIES:
+                if not allow_reviewer_repair:
+                    raise RuntimeError(
+                        "Precomputed workflow execution failed; planner-reviewer "
+                        f"repair is disabled. Error: {execution_error}"
+                    ) from exc
+
+                if attempt >= max_execution_attempts:
                     # Give up after max retries
                     raise RuntimeError(
-                        f"Workflow execution failed after {MAX_EXECUTION_RETRIES} attempts. "
+                        f"Workflow execution failed after {max_execution_attempts} attempts. "
                         f"Last error: {execution_error}"
                     ) from exc
 
@@ -2457,6 +2686,8 @@ class SciMASOrchestrator:
                     "usage": {
                         "input_tokens": p.input_tokens,
                         "output_tokens": p.output_tokens,
+                        "cache_creation_input_tokens": p.cache_creation_input_tokens,
+                        "cache_read_input_tokens": p.cache_read_input_tokens,
                         "cost_usd": p.cost_usd,
                     },
                     "stderr": p.stderr,
@@ -2505,6 +2736,8 @@ class SciMASOrchestrator:
                     "usage": {
                         "input_tokens": run.input_tokens,
                         "output_tokens": run.output_tokens,
+                        "cache_creation_input_tokens": run.cache_creation_input_tokens,
+                        "cache_read_input_tokens": run.cache_read_input_tokens,
                         "cost_usd": run.cost_usd,
                     },
                     "stderr": run.stderr,
@@ -2590,6 +2823,12 @@ class SciMASOrchestrator:
                 f"| session_id: `{p.session_id}` "
                 f"| cost_usd: `{p.cost_usd}`"
             )
+            lines.append(
+                f"- in_tok: `{p.input_tokens}` "
+                f"| out_tok: `{p.output_tokens}` "
+                f"| cache_w: `{p.cache_creation_input_tokens}` "
+                f"| cache_r: `{p.cache_read_input_tokens}`"
+            )
             lines.append(f"- prompt_path: `{p.prompt_path}`")
             lines.append("- **Input problem:**")
             lines.append("```")
@@ -2631,6 +2870,8 @@ class SciMASOrchestrator:
                 f"cost_usd: `{run.cost_usd}`",
                 f"in_tok: `{run.input_tokens}`",
                 f"out_tok: `{run.output_tokens}`",
+                f"cache_w: `{run.cache_creation_input_tokens}`",
+                f"cache_r: `{run.cache_read_input_tokens}`",
             ]
             lines.append("- " + " | ".join(meta))
             lines.append(f"- prompt_path: `{run.prompt_path}`")

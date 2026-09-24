@@ -38,6 +38,9 @@ Public helpers
 - :func:`secondary_verify` — equivalent-match rescue used when the
   deterministic match fails (mirrors SciAgentGYM's
   ``secondary_verification_with_llm``).
+- :func:`judge_drugqa_items` — drug-discovery QA over a *list* of acceptable
+  answer items; returns both a full-match verdict and the fraction of items
+  the answer hit. See :class:`DrugQAJudgement`.
 - :func:`extract_boxed` — pull the last ``\\boxed{...}`` value out of a
   model response. Falls back to None when not present.
 
@@ -176,7 +179,9 @@ def _is_disabled(cfg: dict[str, Any]) -> bool:
     return os.environ.get(flag, "").strip() == "1"
 
 
-def _try_prefix(prefix: str, cfg: dict[str, Any]) -> Optional[LLMJudgeConfig]:
+def _try_prefix(
+    prefix: str, cfg: dict[str, Any], dataset: Optional[str] = None
+) -> Optional[LLMJudgeConfig]:
     """Try to assemble an :class:`LLMJudgeConfig` from one env-var prefix.
 
     Accepts both ``<PREFIX>_API_KEY`` (historical RCB convention) and the
@@ -205,7 +210,14 @@ def _try_prefix(prefix: str, cfg: dict[str, Any]) -> Optional[LLMJudgeConfig]:
         # A prefix that has a key but no model is incomplete; skip it so the
         # next prefix can try to supply one.
         return None
-    return _build_config(cfg, api_key=api_key, api_base=api_base, model=model, prefix=prefix)
+    return _build_config(
+        cfg,
+        api_key=api_key,
+        api_base=api_base,
+        model=model,
+        prefix=prefix,
+        dataset=dataset,
+    )
 
 
 def _build_config(
@@ -215,8 +227,23 @@ def _build_config(
     api_base: str,
     model: str,
     prefix: str,
+    dataset: Optional[str] = None,
 ) -> LLMJudgeConfig:
-    """Assemble a config from a credential source plus the shared settings."""
+    """Assemble a config from a credential source plus the shared settings.
+
+    ``dataset``'s own ``per_dataset`` block may override ``max_tokens`` and
+    ``temperature`` — the two knobs that describe *how much thinking this
+    dataset's prompt provokes*, which is a property of the prompt rather than
+    of the deployment. DrugQA hands the judge a list of gold items to rule on
+    one by one and a JSON object to write; SciAgentGYM hands it two short
+    values and expects 正确/错误. Sizing both at one number means either
+    overpaying for the short one or truncating the long one.
+
+    Deliberately not overridable per dataset: ``model`` and the credentials.
+    A model named in the environment is the deployment's declared judge, and a
+    file on the machine outvoting an exported variable is the trap
+    :func:`_try_config_credentials` already avoids.
+    """
     try:
         timeout = float(cfg.get("default_timeout_seconds") or _DEFAULT_CONFIG["default_timeout_seconds"])
     except (TypeError, ValueError):
@@ -225,7 +252,23 @@ def _build_config(
         max_tokens = int(cfg.get("default_max_tokens") or _DEFAULT_CONFIG["default_max_tokens"])
     except (TypeError, ValueError):
         max_tokens = _DEFAULT_CONFIG["default_max_tokens"]
+    temperature = 0.0
+    if dataset is not None:
+        per = dataset_setting(dataset)
+        try:
+            # ``or max_tokens`` would make a deliberate 0 unsettable; these are
+            # "absent means inherit", so test for absence.
+            if per.get("max_tokens") is not None:
+                max_tokens = int(per["max_tokens"])
+        except (TypeError, ValueError):
+            pass
+        try:
+            if per.get("temperature") is not None:
+                temperature = float(per["temperature"])
+        except (TypeError, ValueError):
+            pass
     return LLMJudgeConfig(
+        temperature=temperature,
         api_base=api_base,
         api_key=api_key,
         model=model,
@@ -235,7 +278,9 @@ def _build_config(
     )
 
 
-def _try_config_credentials(cfg: dict[str, Any]) -> Optional[LLMJudgeConfig]:
+def _try_config_credentials(
+    cfg: dict[str, Any], dataset: Optional[str] = None
+) -> Optional[LLMJudgeConfig]:
     """Assemble a config from credentials stored in the JSON config itself.
 
     Consulted only after every env-var prefix has failed, so an exported key
@@ -259,7 +304,12 @@ def _try_config_credentials(cfg: dict[str, Any]) -> Optional[LLMJudgeConfig]:
         or _DEFAULT_CONFIG["default_api_base"]
     ).strip()
     return _build_config(
-        cfg, api_key=api_key, api_base=api_base, model=model, prefix="<config>"
+        cfg,
+        api_key=api_key,
+        api_base=api_base,
+        model=model,
+        prefix="<config>",
+        dataset=dataset,
     )
 
 
@@ -288,11 +338,11 @@ def resolve_judge_config(*, dataset: Optional[str] = None) -> Optional[LLMJudgeC
         prefix = str(prefix).strip()
         if not prefix:
             continue
-        resolved = _try_prefix(prefix, cfg)
+        resolved = _try_prefix(prefix, cfg, dataset)
         if resolved is not None:
             return resolved
     # No env var carried a credential — fall back to the config file's own.
-    return _try_config_credentials(cfg)
+    return _try_config_credentials(cfg, dataset)
 
 
 def is_judge_enabled(dataset: Optional[str] = None) -> bool:
@@ -386,7 +436,34 @@ def extract_boxed(text: Optional[str]) -> Optional[str]:
 # exhausts 4096 still gets a larger try rather than losing the verdict. (One
 # case in the probe below did exhaust 4096, which is why this escalates instead
 # of retrying once.)
-_REASONING_ESCALATION_TOKENS = (4096, 8192)
+#
+# 8192 was not the top: the two datasets that reached the shared judge both had
+# problems that burned every rung and still returned nothing (SciAgentGYM
+# problem 11 in five separate runs, DrugQA preclinical_research_2), so the
+# ladder continues past it. Every rung is a real request, so the ceiling is a
+# cost decision as much as a quality one — see ``_STARTING_BUDGET`` for how the
+# discovery is paid for once rather than per problem.
+_REASONING_ESCALATION_TOKENS = (4096, 8192, 16384, 32768)
+
+#: What each model needs to be *started* at, learned in-process. Keyed by
+#: ``(api_base, model)`` because the same model name behind two endpoints is
+#: two different deployments.
+#:
+#: Without this, a model that needs 16384 pays for the discovery on every single
+#: call: a failure at each rung bills 2048+4096+8192+16384+32768 output tokens,
+#: nearly all of them reasoning nobody reads, and a batch of 21 problems that
+#: all trip the same wall pays it 21 times. The memo holds the high-water mark
+#: of what has been *attempted* (not just what succeeded), so a model that
+#: cannot finish at any rung is tried once at the top and then skips straight to
+#: the top on the next problem — same verdict, one request instead of five.
+#: It is a floor for the next call, never a ceiling: ``cfg.max_tokens`` is
+#: still tried if it is larger.
+_STARTING_BUDGET: dict[tuple[str, str], int] = {}
+
+
+def reset_starting_budget() -> None:
+    """Forget the per-model budget memo (tests, and after a config reload)."""
+    _STARTING_BUDGET.clear()
 
 # Why the last ``_call_judge`` produced no verdict. Callers collapse
 # "no judge configured" and "the judge call failed" into the same fallback,
@@ -634,29 +711,61 @@ def _call_judge(
             return None
 
     _set_last_error("")
-    payload = send(cfg.max_tokens)
-    if payload is None:
-        return None
-    content, finish = _judge_choice(payload)
-    for budget in _REASONING_ESCALATION_TOKENS:
-        if content or finish != "length" or cfg.max_tokens >= budget:
-            break
-        # The budget ran out before any answer was written — a reasoning
-        # model thinking out loud. Give it more room and try again.
+    # Start where this model last needed to start, then climb. ``start`` is a
+    # floor, so a config that raises ``max_tokens`` above the memo still wins.
+    memo = _STARTING_BUDGET.get((cfg.api_base, cfg.model), 0)
+    start = max(cfg.max_tokens, memo)
+    budgets = [start, *(b for b in _REASONING_ESCALATION_TOKENS if b > start)]
+    #: The best reply so far. Kept because escalating can come back *worse*:
+    #: a larger budget that returns nothing must not discard a shorter reply
+    #: that was cut off mid-sentence, which a caller able to salvage a partial
+    #: answer (``_parse_drugqa_judgement``) still gets value from.
+    best: tuple[str, str] = ("", "")
+    #: Tracked apart from ``best`` because ``best`` only moves for a non-empty
+    #: reply, and the reason an *empty* one was empty is exactly what the
+    #: error message has to report ("length" — a reasoning model — versus
+    #: "stop", which is a model problem no larger budget will fix).
+    last_finish = ""
+    transport_failed = False
+    for budget in budgets:
         payload = send(budget)
         if payload is None:
-            return None
+            # Transport failure, not a budget one. Stop climbing — a bigger
+            # ``max_tokens`` does not fix a dead endpoint — but keep whatever
+            # an earlier rung returned instead of discarding it.
+            transport_failed = True
+            break
         content, finish = _judge_choice(payload)
+        last_finish = finish
+        _STARTING_BUDGET[(cfg.api_base, cfg.model)] = max(memo, budget)
+        if content and finish != "length":
+            return content
+        if len(content) > len(best[0]):
+            best = (content, finish)
+        if finish != "length":
+            # A model that stopped on its own will not stop differently for
+            # more room; only a truncated reply is worth a bigger budget.
+            break
+    content, finish = best
     if not content:
-        _set_last_error(
-            f"model {cfg.model!r} returned no text (finish_reason={finish or 'unknown'})"
-            + (
-                "; it appears to be a reasoning model — raise default_max_tokens"
-                " in config/llm_judge.json"
-                if finish == "length" else ""
+        finish = last_finish
+        # ``send`` already recorded *why* the last request died, and "HTTP 400
+        # from <url>" and "the model thought until its budget ran out" need
+        # different fixes — so a transport failure keeps its own reason rather
+        # than being relabelled here as an empty completion.
+        if not transport_failed:
+            _set_last_error(
+                f"model {cfg.model!r} returned no text "
+                f"(finish_reason={finish or 'unknown'})"
+                + (
+                    "; it appears to be a reasoning model — raise default_max_tokens"
+                    " in config/llm_judge.json"
+                    if finish == "length" else ""
+                )
             )
-        )
         return None
+    # Truncated at every rung, but non-empty: return it rather than nothing —
+    # the caller decides whether the fragment is usable.
     return content
 
 
@@ -902,9 +1011,528 @@ def secondary_verify(
     return None
 
 
+# ---------------------------------------------------------------------------
+# DrugQA item-level judge
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DrugQAJudgement:
+    """A DrugQA judge verdict: did the answer match *all* the items?
+
+    DrugQA entries carry a list of acceptable answer items
+    (``task_info["drugqa_answers"]``), and an answer only counts as correct
+    when it names every one of them. That gives two separate signals, and
+    the report already aggregates both — ``correct`` drives
+    ``answer_accuracy``, ``hit_rate`` drives ``answer_score_avg``:
+
+    - ``correct``   — every item was hit (the dataset's own pass/fail).
+    - ``hit_rate``  — ``matched / total``, the partial-credit signal.
+    """
+
+    correct: bool
+    hit_rate: float
+    matched: int
+    total: int
+    reason: str = ""
+
+
+# A list-shaped gold does not fit ``_ANSWER_CORRECT_PROMPT``: that prompt has a
+# single ``expected`` slot and answers with a bare 正确/错误, so it can express
+# neither "which of the N items were hit" nor a hit rate. Rather than renumber
+# its rules (5 is the solution-steps rule, 6 the image rule) and put the
+# SciAgentGYM wording at risk, DrugQA gets its own prompt and a structured
+# reply. Keep every literal brace below doubled — the prompt goes through
+# ``str.format``.
+_DRUGQA_PROMPT = (
+    "这是一个问题、一组标准答案条目，以及一个由AI模型生成的答案。\n"
+    "标准答案可能包含多个条目，请你**逐条**判断模型答案是否命中。\n"
+    "评判要求：\n"
+    "1. 忽略答案中的格式差异、无关的前缀或文字修饰。\n"
+    "2. 基因、蛋白、靶点、生物标志物的名称，忽略大小写、连字符与希腊字母写法的"
+    "差异（例如 TNF-alpha、TNFα、TNFA 视为同一个条目）。\n"
+    "3. 「命中」指模型答案明确给出了该条目所指的实体、结论或机制；"
+    "仅仅提到该词但结论相反、或把它排除在外，不算命中。\n"
+    "4. 模型答案与某条目在含义上等价（换用同义表述、给出该基因的别名）即算命中。\n"
+    "5. correct 表示是否**全部**条目都命中。\n"
+    "\n"
+    "请只输出一个 JSON 对象，不要输出任何其他内容：\n"
+    '{{"correct": true或false, "matched": 命中条目数, "total": {total}, '
+    '"hit_rate": 命中率(0到1之间的小数), "reason": "一句话说明"}}\n'
+    "\n"
+    "---\n"
+    "问题：\n{question}\n"
+    "---\n"
+    "标准答案条目（共 {total} 条，编号仅供参考，请按内容匹配）：\n{expected}\n"
+    "---\n"
+    "AI模型的答案：\n{predicted}\n"
+    "---\n"
+)
+
+_DRUGQA_SYSTEM = "You are a strict scientific answer judge."
+
+
+def _json_object_from_text(text: Optional[str]) -> Optional[dict[str, Any]]:
+    """Return the first parseable JSON object embedded in ``text``.
+
+    Judge replies come back wrapped in prose or a ```json fence often enough
+    that slicing at the first ``{`` and scanning forward is worth doing: a
+    strict ``json.loads`` on the whole reply would throw the verdict away.
+    """
+    if not text:
+        return None
+    start = text.find("{")
+    while start != -1:
+        inner = _extract_balanced_braces(text, start)
+        if inner is not None:
+            try:
+                parsed = json.loads("{" + inner + "}")
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                return parsed
+        start = text.find("{", start + 1)
+    return None
+
+
+# A whole ``"key": value`` pair, where the value is a JSON scalar. Anchored on
+# the opening quote so a key that appears inside a *string* value cannot be
+# mistaken for a field.
+_TRUNCATED_FIELD = re.compile(
+    r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*'
+    r'("(?:[^"\\]|\\.)*"|true|false|null|-?\d+(?:\.\d+)?)'
+)
+
+
+def _salvage_truncated_object(text: Optional[str]) -> Optional[dict[str, Any]]:
+    """Recover the completed fields of an object that was cut off mid-write.
+
+    A reasoning model whose budget runs out mid-JSON returns something like
+    ``{"correct": false,`` — the brace never closes, so it is not JSON and
+    :func:`_json_object_from_text` (correctly) refuses it. But ``correct`` is
+    the *first* field of :data:`_DRUGQA_PROMPT`'s object by design, so the
+    verdict is very often exactly the part that survived. Reading back the
+    fields that were written whole recovers a real judge ruling instead of
+    discarding it for a token-overlap guess.
+
+    Only ever called for a reply that is *unterminated*. A reply that closes
+    its brace and still fails to parse is malformed in some other way, and
+    guessing at it is not this function's job.
+    """
+    if not text:
+        return None
+    start = text.find("{")
+    if start == -1 or _extract_balanced_braces(text, start) is not None:
+        return None
+    payload: dict[str, Any] = {}
+    for match in _TRUNCATED_FIELD.finditer(text[start:]):
+        key, raw = match.group(1), match.group(2)
+        if key in payload:
+            continue
+        try:
+            payload[key] = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+    return payload or None
+
+
+def _coerce_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "正确"}:
+            return True
+        if lowered in {"false", "no", "错误"}:
+            return False
+    return None
+
+
+def _coerce_int(value: Any) -> Optional[int]:
+    # ``bool`` is an ``int`` in Python; ``true`` must not read as 1 match.
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        match = re.search(r"\d+", value)
+        if match:
+            return int(match.group())
+    return None
+
+
+def _coerce_rate(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        rate = float(value)
+    elif isinstance(value, str):
+        match = re.search(r"\d+(?:\.\d+)?", value)
+        if not match:
+            return None
+        rate = float(match.group())
+    else:
+        return None
+    # A judge that answers 50 for "half" means percent, not 50x.
+    if 1.0 < rate <= 100.0:
+        rate = rate / 100.0
+    return max(0.0, min(rate, 1.0))
+
+
+def _parse_drugqa_judgement(
+    text: Optional[str],
+    *,
+    total: int,
+) -> Optional[DrugQAJudgement]:
+    """Parse a DrugQA judge reply into a :class:`DrugQAJudgement`.
+
+    ``total`` is supplied by the caller and never read from the model: a judge
+    that under-counts the gold items would otherwise raise its own hit rate.
+
+    ``hit_rate`` is derived from ``matched`` rather than trusted, so the two
+    fields can never contradict each other. When the judge's own ``correct``
+    flag disagrees with that count, neither value is rewritten — the
+    disagreement is recorded in ``reason`` so a reader can audit it.
+
+    Returns ``None`` only when the reply carries no usable count *and* no
+    verdict, which sends the caller to the deterministic scorer.
+    """
+    if total <= 0:
+        return None
+    payload = _json_object_from_text(text)
+    salvaged = False
+    if payload is None:
+        payload = _salvage_truncated_object(text)
+        salvaged = payload is not None
+        # A cut-off reply that never wrote its verdict has nothing to salvage;
+        # ``correct`` is the one field worth recovering.
+        if payload is not None and "correct" not in payload:
+            return None
+    if payload is None:
+        return None
+    notes: list[str] = []
+    if salvaged:
+        notes.append(
+            "reply was cut off mid-object; read the fields it did complete"
+        )
+    matched = _coerce_int(payload.get("matched"))
+    rate = _coerce_rate(payload.get("hit_rate"))
+    if matched is None:
+        if rate is not None:
+            matched = int(round(rate * total))
+    elif rate is not None and abs(rate - matched / total) > 0.01:
+        # ``matched`` wins, but a judge whose own rate disagrees with its own
+        # count is worth flagging: it is the signal that the reply is sloppy.
+        notes.append(f"judge reported hit_rate={rate:.2f} with matched={matched}/{total}")
+    correct = _coerce_bool(payload.get("correct"))
+    if matched is None:
+        if correct is None:
+            return None
+        # No count at all, but the judge did rule. Dropping that verdict to the
+        # fallback would contradict "the judge is authoritative": True means
+        # every item was hit, False leaves the count unknown so it reads as 0.
+        matched = total if correct else 0
+        notes.append(f"judge gave no item count; read as matched={matched}/{total}")
+    matched = max(0, min(matched, total))
+    hit_rate = matched / total
+    if correct is None:
+        correct = matched == total
+    elif correct != (hit_rate >= 1.0):
+        notes.append(f"judge reported correct={correct} with matched={matched}/{total}")
+    reason = str(payload.get("reason") or "").strip()
+    if notes:
+        suffix = "；".join(notes)
+        reason = f"{reason}（{suffix}）" if reason else suffix
+    return DrugQAJudgement(
+        correct=correct,
+        hit_rate=hit_rate,
+        matched=matched,
+        total=total,
+        reason=reason,
+    )
+
+
+def judge_drugqa_items(
+    question: str,
+    predicted: str,
+    expected_items: Iterable[str],
+    *,
+    dataset: Optional[str] = None,
+) -> Optional[DrugQAJudgement]:
+    """Judge a DrugQA answer against its list of acceptable items.
+
+    Returns ``None`` when there are no items to judge, no judge is configured,
+    the call fails, or the reply carries no usable match count — callers then
+    fall back to the deterministic scorer. A reply that parses to a count
+    always yields a :class:`DrugQAJudgement`; see
+    :func:`_parse_drugqa_judgement` for how the two fields are derived.
+    """
+    items = [str(item).strip() for item in (expected_items or []) if str(item).strip()]
+    if not items:
+        return None
+    cfg = resolve_judge_config(dataset=dataset)
+    if cfg is None:
+        return None
+    prompt = _DRUGQA_PROMPT.format(
+        question=str(question or ""),
+        expected="\n".join(f"{idx}. {item}" for idx, item in enumerate(items, start=1)),
+        predicted=str(predicted or ""),
+        total=len(items),
+    )
+    response = _call_judge(prompt, cfg, system=_DRUGQA_SYSTEM)
+    if response is None:
+        return None
+    judgement = _parse_drugqa_judgement(response, total=len(items))
+    if judgement is None:
+        # ``_call_judge`` succeeded, so ``_LAST_ERROR`` is empty; without this
+        # the report would show a bare fallback with no reason at all.
+        _set_last_error(
+            f"model {cfg.model!r} returned an unparseable judgement: "
+            f"{response.strip()[:200]!r}"
+        )
+    return judgement
+
+
+# ---------------------------------------------------------------------------
+# MADD requirement-completion judge
+# ---------------------------------------------------------------------------
+
+
+#: Ceiling on the molecules the judge is asked to enumerate. A pathological
+#: answer is not worth a 32k-token reply, and the cap is applied here rather
+#: than by truncating ``predicted`` so the note can say what was dropped.
+_MADD_MAX_MOLECULES = 200
+
+
+@dataclass(frozen=True)
+class MADDCompletionJudgement:
+    """A MADD judge verdict on *requirement completion*, not correctness.
+
+    ``dataset/MADD/dataset_L.xlsx`` carries no ground truth, so there is
+    no answer to grade against. What the judge reads is whether the work
+    was delivered, in the two halves the grader then scores:
+
+    - ``answered`` — one flag per molecule-generation requirement, in the
+      order the table lists them: did the answer give a molecule for it?
+    - ``molecule_metric_coverage`` — per molecule the answer reported,
+      the fraction of the required properties it carried (0..1).
+
+    The judge is deliberately not asked whether the molecules are
+    chemically sound, and its arithmetic is not trusted: it returns
+    counts, and :func:`grader._madd_completion_from_parts` turns those
+    into the 0..1 ``answer_score``.
+    """
+
+    answered: list[bool]
+    molecule_metric_coverage: list[float]
+    reason: str = ""
+
+
+# MADD's answer metric used to be a hit rate against a gold molecule list
+# and was asked for one. There is no list any more, so the model is asked
+# for the two *counts* the halves need — the same "structured reply, score
+# computed in Python" shape the DrugQA judge uses.
+_MADD_COMPLETION_PROMPT = (
+    "这是一个药物设计任务、该任务的子要求列表，以及一个由AI模型生成的答案。\n"
+    "请只判定**完成度**，**不要**评判分子本身：不判断结构是否合理、不判断性质数值"
+    "是否可信、不判断设计方案好不好。只回答下面两个问题。\n"
+    "\n"
+    "A. 对每一个子要求，答案是否给出了至少一个**具体的分子**"
+    "（SMILES 或明确的结构标识）？\n"
+    "   - 只谈类别（如「已生成若干候选分子」「前 10 名」）而没有列出任何具体分子 = false。\n"
+    "   - 同一个分子可以同时算作多个子要求的回答。\n"
+    "   - 必须**恰好 {total} 项**、按下面给出的子要求顺序返回，"
+    "即使答案完全忽略了某个子要求，也要为它返回一项 false。\n"
+    "B. 答案里报告的**每一个分子**，给出了几项必需性质？\n"
+    "   - 数一数该分子那一行（或那一段）里，下列 {metric_count} 项必需指标中"
+    "**有值**的有几项。\n"
+    "   - 必需指标（顺序固定）：{metrics}\n"
+    "   - 写成「n/a」「N/A」「-」「未知」这类表示没算出来的占位符，**不算**有值。\n"
+    "   - 不要自己算分数或百分比，只给出这个 0 到 {metric_count} 的整数个数。\n"
+    "\n"
+    "请只输出一个 JSON 对象，不要输出任何其他内容：\n"
+    '{{"subtask_answered": [true或false，共 {total} 项，按子要求顺序],\n'
+    '  "molecules": [{{"id": "该分子的 SMILES 或表内标识", '
+    '"metrics_reported": 0到{metric_count}的整数}}],\n'
+    '  "reason": "一句话说明"}}\n'
+    "\n"
+    "---\n"
+    "任务：\n{question}\n"
+    "---\n"
+    "子要求（共 {total} 个，请按此顺序返回 {total} 项）：\n{subtasks}\n"
+    "---\n"
+    "AI模型的答案：\n{predicted}\n"
+    "---\n"
+)
+
+_MADD_COMPLETION_SYSTEM = "You are a strict scientific requirement-completeness judge."
+
+
+def _coerce_bool_list(value: Any) -> Optional[list[bool]]:
+    """Coerce the reply's ``subtask_answered`` into a list of flags.
+
+    A bare bool is *not* accepted — the whole point of the field is that it
+    is per-requirement, and reading a scalar as "all true" would hand out
+    half a point for a reply that never answered the question. ``None`` for
+    anything that is not a list of booleans.
+    """
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        return None
+    flags: list[bool] = []
+    for item in value:
+        if isinstance(item, dict):
+            item = item.get("has_molecules", item.get("answered"))
+        flag = _coerce_bool(item)
+        if flag is None:
+            return None
+        flags.append(flag)
+    return flags
+
+
+def _parse_madd_completion(
+    text: Optional[str],
+    *,
+    sub_tasks: int,
+    metric_count: int,
+) -> Optional[MADDCompletionJudgement]:
+    """Parse a completion reply into a :class:`MADDCompletionJudgement`.
+
+    ``sub_tasks`` and ``metric_count`` come from the caller, never from the
+    reply — a judge that under-counts the requirements would otherwise
+    raise its own Half A, exactly the hole :func:`_parse_madd_judgement`
+    closed for DrugQA with its caller-supplied ``total``.
+
+    Returns ``None`` when nothing usable is left to rule on: no JSON
+    object, a ``subtask_answered`` that is not exactly ``sub_tasks`` long,
+    or a ``molecules`` list whose every entry carried an out-of-range count.
+    A genuinely empty ``molecules`` array is *not* that case — it is a
+    judgement that the answer reported no molecules, and it scores zero
+    rather than sending the grader down its "give up" path.
+    """
+    if sub_tasks <= 0 or metric_count <= 0:
+        return None
+    payload = _json_object_from_text(text)
+    salvaged = False
+    if payload is None:
+        payload = _salvage_truncated_object(text)
+        salvaged = payload is not None
+        # A truncated reply that never reached the two arrays has nothing to
+        # salvage: the fields it did emit are the ones we do not want.
+        if payload is not None and not (
+            isinstance(payload.get("subtask_answered"), list)
+            and isinstance(payload.get("molecules"), list)
+        ):
+            return None
+    if payload is None:
+        return None
+
+    notes: list[str] = []
+    if salvaged:
+        notes.append("reply was cut off mid-object; read the fields it did complete")
+
+    answered = _coerce_bool_list(payload.get("subtask_answered"))
+    if answered is None:
+        return None
+    if len(answered) != sub_tasks:
+        # Wrong length means the model did not follow the one instruction the
+        # whole half depends on; guessing which entries align would be worse
+        # than declaring the call unusable.
+        return None
+
+    raw_molecules = payload.get("molecules")
+    if not isinstance(raw_molecules, list):
+        return None
+    if len(raw_molecules) > _MADD_MAX_MOLECULES:
+        notes.append(
+            f"judge enumerated {len(raw_molecules)} molecules; "
+            f"kept the first {_MADD_MAX_MOLECULES}"
+        )
+        raw_molecules = raw_molecules[:_MADD_MAX_MOLECULES]
+
+    coverage: list[float] = []
+    dropped = 0
+    for entry in raw_molecules:
+        if not isinstance(entry, dict):
+            dropped += 1
+            continue
+        count = _coerce_int(entry.get("metrics_reported"))
+        if count is None or not 0 <= count <= metric_count:
+            dropped += 1
+            continue
+        coverage.append(count / metric_count)
+    if raw_molecules and not coverage:
+        # Every row the judge returned was unusable, so there is no honest
+        # reading of the second half — including "zero", which is an
+        # assertion about the answer rather than about the reply.
+        return None
+    if dropped:
+        notes.append(f"ignored {dropped} molecule row(s) with an out-of-range count")
+
+    reason = str(payload.get("reason") or "").strip()
+    if notes:
+        suffix = "；".join(notes)
+        reason = f"{reason}（{suffix}）" if reason else suffix
+    return MADDCompletionJudgement(
+        answered=answered,
+        molecule_metric_coverage=coverage,
+        reason=reason,
+    )
+
+
+def judge_madd_completion(
+    question: str,
+    subtask_cases: Iterable[str],
+    required_metrics: Iterable[str],
+    predicted: str,
+    *,
+    dataset: Optional[str] = None,
+) -> Optional[MADDCompletionJudgement]:
+    """Judge how much of a MADD task's stated work the answer delivered.
+
+    ``subtask_cases`` is the requirement list, in the order ``case`` gives
+    it, one label per requirement; the reply must carry exactly that many
+    flags. Returns ``None`` when there are no requirements, no judge is
+    configured, the call fails, or the reply cannot be read — the caller
+    treats the first as unscoreable and the rest per its own policy.
+    """
+    subtasks = [str(item).strip() for item in (subtask_cases or []) if str(item).strip()]
+    metrics = [str(item).strip() for item in (required_metrics or []) if str(item).strip()]
+    if not subtasks or not metrics:
+        return None
+    cfg = resolve_judge_config(dataset=dataset)
+    if cfg is None:
+        return None
+    prompt = _MADD_COMPLETION_PROMPT.format(
+        question=str(question or ""),
+        subtasks="\n".join(
+            f"{idx}. {name}" for idx, name in enumerate(subtasks, start=1)
+        ),
+        predicted=str(predicted or ""),
+        total=len(subtasks),
+        metrics=", ".join(metrics),
+        metric_count=len(metrics),
+    )
+    response = _call_judge(prompt, cfg, system=_MADD_COMPLETION_SYSTEM)
+    if response is None:
+        return None
+    judgement = _parse_madd_completion(
+        response, sub_tasks=len(subtasks), metric_count=len(metrics)
+    )
+    if judgement is None:
+        _set_last_error(
+            f"model {cfg.model!r} returned an unparseable judgement: "
+            f"{response.strip()[:200]!r}"
+        )
+    return judgement
+
+
 __all__ = [
     "CONFIG_PATH",
+    "DrugQAJudgement",
     "LLMJudgeConfig",
+    "MADDCompletionJudgement",
     "NO_CONFIG",
     "dataset_setting",
     "extract_boxed",
@@ -913,6 +1541,9 @@ __all__ = [
     "get_last_judge_error",
     "is_judge_enabled",
     "judge_correct",
+    "judge_drugqa_items",
+    "judge_madd_completion",
+    "reset_starting_budget",
     "resolve_judge_config",
     "secondary_verify",
     "set_judge_cache_dir",

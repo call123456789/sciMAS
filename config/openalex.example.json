@@ -1,0 +1,7 @@
+{
+  "$note": "Copy this file to config/openalex.local.json. The local file is git-ignored; never put live keys in this tracked example.",
+  "api_keys": [
+    "replace-with-primary-openalex-key",
+    "replace-with-secondary-openalex-key"
+  ]
+}

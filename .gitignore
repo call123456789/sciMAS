@@ -5,6 +5,9 @@ __pycache__/
 # tests/runner.py --out points at. All three are regenerated, not fixtures.
 runs/
 runs-dashboard/
+runs-replay/
+output/
+outputs/
 tests/results/
 # Benchmark corpora are downloaded, not versioned: ResearchClawBench (2.4G)
 # and SMDDBench (2.8G) alone dwarf the checkout. See README for where to get
@@ -12,6 +15,12 @@ tests/results/
 dataset/
 # Auto-resolved mcp configs (see ClaudeRunner._resolve_mcp_config).
 config/*.resolved.json
+config/*.resolved.*.json
+# biomart cache, regenerated on every query.
+.pybiomart.sqlite
+# macOS resource-fork shadow files. Finder creates `._Foo` next to every file
+# on non-HFS volumes; they are not part of the project.
+._*
 # Per-machine MCP server credentials. Keeps a live key out of git history;
 # see claude_runner.py:_load_mcp_local_env.
 config/mcp.local.json
@@ -21,6 +30,8 @@ config/llm_judge.local.json
 # Per-machine OpenAlex key for the literature tool. Keeps a live key out of
 # git history; see tools/web/litsearch_server.py:_local_config_key.
 config/openalex.local.json
+# Per-machine model endpoints and credentials for the dashboard.
+config/models.local.json
 .DS_Store
 .pytest_cache/
 *.tmp
